@@ -1,0 +1,15 @@
+.openai
+.sites-runtime
+.wrangler
+build
+examples
+db
+drizzle
+scripts
+worker.ts
+vite.config.*
+wrangler.*
+node_modules
+.next
+.env.local
+*.zip
