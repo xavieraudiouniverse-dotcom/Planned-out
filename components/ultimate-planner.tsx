@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
+import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
 import { plannerLevels, type AppState, type AppView, type ModuleName, type ModuleRecord, type PlannerFile, type PlannerLevel, type PlannerTask, type Priority, type Status } from '@/lib/types';
 
 const STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
+const MEMORY_KEY = 'xavier-planner-os-memory-v1';
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -129,10 +131,16 @@ export function UltimatePlanner() {
   const [aiProgress, setAiProgress] = useState('');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedModule, setSelectedModule] = useState<ModuleName>('knowledge');
+  const [memory, setMemory] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const backupInput = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => { const loaded = safeRead(); setState(loaded); setView(loaded.lastView); }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { const raw = localStorage.getItem(MEMORY_KEY); if (raw) setMemory(JSON.parse(raw) as string[]); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem(MEMORY_KEY, JSON.stringify(memory)); }, [memory]);
   useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, lastView: view })); }, [state, view]);
   useEffect(() => {
     if (!sb) return;
@@ -283,6 +291,59 @@ export function UltimatePlanner() {
     alert(`${name} template installed into planner.`);
   }
 
+  function assistantContext(): AssistantContext {
+    const done = state.tasks.filter((task) => task.status === 'done').length;
+    const topTasks = [...state.tasks]
+      .filter((task) => task.status !== 'done')
+      .sort((a, b) => {
+        const rank: Record<Priority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+        return rank[a.priority] - rank[b.priority] || a.dueDate.localeCompare(b.dueDate);
+      })
+      .slice(0, 8)
+      .map((task) => ({ title: task.title, level: task.level, status: task.status, priority: task.priority, due: task.dueDate, area: task.area }));
+    return {
+      currentView: view,
+      theme: state.theme,
+      stats: { tasks: state.tasks.length, done, overdue, records: state.records.length, files: state.files.length },
+      topTasks,
+      recentRecords: state.records.slice(0, 8).map((record) => ({ module: record.module, title: record.title })),
+      memory
+    };
+  }
+
+  function assistantCreateTask(input: { title: string; notes?: string; level?: PlannerLevel; priority?: Priority; area?: string; dueDate?: string }) {
+    const task = blankTask(input.level || 'daily');
+    task.title = input.title;
+    if (input.notes) task.notes = input.notes;
+    if (input.priority) task.priority = input.priority;
+    if (input.area) task.area = input.area;
+    if (input.dueDate) { task.dueDate = input.dueDate; task.startDate = input.dueDate; }
+    mutate((current) => ({ ...current, tasks: [task, ...current.tasks] }));
+    if (user) void saveTaskToCloud(task);
+    alert(`Qwen created task "${task.title}".`);
+  }
+
+  function assistantCreateRecord(module: ModuleName, title: string, body?: string) {
+    const record = { ...blankRecord(module), title, body: body || '' };
+    mutate((current) => ({ ...current, records: [record, ...current.records] }));
+    alert(`Qwen added a ${moduleTitle(module)} entry.`);
+  }
+
+  function assistantOpenTask(query: string): { found: boolean; title?: string } {
+    const q = query.toLowerCase();
+    const match = state.tasks.find((task) => task.title.toLowerCase().includes(q)) || state.tasks.find((task) => [task.notes, task.area, ...task.tags].join(' ').toLowerCase().includes(q));
+    if (!match) return { found: false };
+    setView('planner');
+    setSelectedTaskId(match.id);
+    return { found: true, title: match.title };
+  }
+
+  function assistantRemember(note: string) {
+    const clean = note.trim();
+    if (!clean) return;
+    setMemory((current) => (current.some((item) => item.toLowerCase() === clean.toLowerCase()) ? current : [clean, ...current].slice(0, 60)));
+  }
+
   const shellClass = `xp-shell theme-${state.theme} density-${state.density}`;
   return <div className={shellClass}>
     {mobileOpen && <button className="overlay" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
@@ -312,6 +373,15 @@ export function UltimatePlanner() {
     {taskModal && <TaskModal form={taskForm} tasks={state.tasks} editing={Boolean(editingTask)} setForm={setTaskForm} onSubmit={submitTask} onClose={() => setTaskModal(false)} />}
     {recordModal && <RecordModal module={recordModal} form={recordForm} setForm={setRecordForm} onSubmit={submitRecord} onClose={() => setRecordModal(null)} />}
     {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} busy={busy} onSubmit={signIn} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
+    <AssistantPanel actions={{
+      getContext: assistantContext,
+      navigate: setView,
+      createTask: assistantCreateTask,
+      createRecord: assistantCreateRecord,
+      openTask: assistantOpenTask,
+      setTheme: (theme) => mutate((current) => ({ ...current, theme: theme as AppState['theme'] })),
+      remember: assistantRemember
+    }} />
   </div>;
 }
 
