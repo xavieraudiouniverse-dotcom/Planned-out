@@ -66,3 +66,75 @@ export async function qwenOrLlamaBreakdown(
     worker.terminate();
   }
 }
+
+export async function localQwenChat(
+  prompt: string,
+  context: unknown,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  onProgress: (message: string) => void
+): Promise<string> {
+  if (!('gpu' in navigator)) {
+    throw new Error(
+      'This browser does not expose WebGPU. Try the latest Chrome or Edge on a supported device.'
+    );
+  }
+
+  const webllm = await import('@mlc-ai/web-llm');
+
+  const available = new Set(
+    webllm.prebuiltAppConfig.model_list.map((model) => model.model_id)
+  );
+
+  const modelId = MODELS.find(
+    (id) => id.startsWith('Qwen') && available.has(id)
+  );
+
+  if (!modelId) {
+    throw new Error('No compatible local Qwen model is available.');
+  }
+
+  const worker = new Worker(
+    new URL('./local-ai.worker.ts', import.meta.url),
+    { type: 'module' }
+  );
+
+  try {
+    const engine = await webllm.CreateWebWorkerMLCEngine(worker, modelId, {
+      initProgressCallback: (progress) => onProgress(progress.text),
+    });
+
+    onProgress(`Running ${modelId} locally…`);
+
+    const completion = await engine.chat.completions.create({
+      temperature: 0.35,
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'system',
+          content: `You are Qwen, the private on-device assistant inside Xavier Planner OS.
+
+Help the user plan, organise, prioritise and reason about their tasks and goals.
+
+Be concise, practical and action-oriented.
+
+Never claim you created, changed, deleted, navigated, saved or completed something in the application unless that action actually happened.
+
+CURRENT PLANNER CONTEXT:
+${JSON.stringify(context, null, 2)}`
+        },
+        ...history.slice(-8),
+        {
+          role: 'user',
+          content: prompt
+        }
+      ]
+    });
+
+    return (
+      completion.choices[0]?.message.content?.trim() ||
+      'Qwen did not return a response.'
+    );
+  } finally {
+    worker.terminate();
+  }
+}
