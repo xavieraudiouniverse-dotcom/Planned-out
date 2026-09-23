@@ -12,7 +12,7 @@ import { z } from 'zod';
 export const maxDuration = 30;
 
 // Qwen 3 flagship instruct model, served through the Vercel AI Gateway.
-const MODEL = 'alibaba/qwen3-max';
+const MODEL = 'alibaba/qwen3.5-flash';
 
 type AssistantContext = {
   currentView?: string;
