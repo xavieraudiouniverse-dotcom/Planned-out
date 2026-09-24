@@ -1,0 +1,21 @@
+{
+  "name": "Planned Out",
+  "short_name": "Planned Out",
+  "description": "AI-powered life planning with dates, time blocks, shared calendars and reminders.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060713",
+  "theme_color": "#11142a",
+  "icons": [
+    {
+      "src": "/planned-out-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/planned-out-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

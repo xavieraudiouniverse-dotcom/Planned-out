@@ -23,3 +23,116 @@
 /* === Planned Out professional collaborative calendar === */
 .calendar-pro-page{padding-top:22px}.calendar-pro-hero{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;border:1px solid var(--line);border-radius:26px;padding:26px;margin-bottom:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 16%,var(--card)),color-mix(in srgb,var(--accent2) 8%,var(--card)))}.calendar-pro-hero h2{font-size:clamp(30px,4vw,52px);line-height:1;letter-spacing:-.055em;margin:9px 0 12px}.calendar-pro-hero p:not(.eyebrow){margin:0;max-width:760px;color:var(--muted);line-height:1.65}.calendar-pro-hero-actions{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}.calendar-pro-hero-actions button,.calendar-pro-toolbar button,.calendar-source,.calendar-day-add,.calendar-pro-side button,.calendar-invite-card button,.calendar-people-modal button,.calendar-event-modal button{background:var(--card2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px}.calendar-pro-message{margin:0 0 16px;padding:11px 14px;border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--accent2) 11%,var(--card));color:var(--text)}.calendar-invite-banner{display:flex;gap:18px;justify-content:space-between;align-items:center;margin-bottom:16px;padding:15px 17px;border:1px solid color-mix(in srgb,var(--accent) 50%,var(--line));border-radius:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 14%,var(--card)),var(--card))}.calendar-invite-banner>div:first-child strong,.calendar-invite-banner>div:first-child span{display:block}.calendar-invite-banner>div:first-child span{color:var(--muted);font-size:12px;margin-top:4px}.calendar-invite-stack{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}.calendar-invite-card{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:14px;background:var(--card)}.calendar-invite-card div{min-width:130px}.calendar-invite-card b,.calendar-invite-card small{display:block}.calendar-invite-card small{color:var(--muted);margin-top:2px}.calendar-pro-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:16px}.calendar-pro-main,.calendar-pro-side{min-width:0}.calendar-pro-main{border:1px solid var(--line);border-radius:24px;background:var(--card);overflow:hidden}.calendar-pro-toolbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}.calendar-pro-toolbar h3{margin:0;text-align:center;font-size:21px;letter-spacing:-.02em}.month-switcher{display:flex;gap:7px}.month-switcher button{padding:8px 11px}.calendar-access-badge{justify-self:end;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.access-dot{width:9px;height:9px;border-radius:999px;background:var(--muted);box-shadow:0 0 0 4px color-mix(in srgb,var(--muted) 13%,transparent)}.access-dot.owner{background:var(--accent2);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent2) 14%,transparent)}.access-dot.editor{background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}.access-dot.viewer{background:var(--warn);box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 14%,transparent)}.calendar-weekdays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--card2) 55%,var(--card))}.calendar-weekdays span{padding:11px 9px;text-align:center;color:var(--muted);font-size:10px;letter-spacing:.13em;font-weight:900}.calendar-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.calendar-pro-day{position:relative;min-height:155px;padding:9px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--card) 93%,transparent);transition:.15s}.calendar-pro-day:nth-child(7n){border-right:0}.calendar-pro-day:hover{background:color-mix(in srgb,var(--accent) 6%,var(--card))}.calendar-pro-day.outside{opacity:.42}.calendar-pro-day.today{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 10%,var(--card)),var(--card))}.calendar-day-head{display:flex;align-items:center;justify-content:space-between;min-height:24px}.calendar-day-head>b{display:grid;place-items:center;width:28px;height:28px;border-radius:10px;font-size:12px}.calendar-pro-day.today .calendar-day-head>b{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#070812}.calendar-day-head span{font-size:9px;color:var(--accent2);font-weight:900;text-transform:uppercase;letter-spacing:.08em}.calendar-day-items{display:flex;flex-direction:column;gap:5px;margin-top:6px}.calendar-item{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:9px;padding:6px 7px;background:var(--card2);color:var(--text);overflow:hidden}.calendar-item.private{border-left:3px solid var(--muted)}.calendar-item.shared{border-left:3px solid var(--accent)}.calendar-item small,.calendar-item b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.calendar-item small{font-size:9px;color:var(--muted);margin-bottom:2px}.calendar-item b{font-size:11px}.calendar-day-add{position:absolute;right:8px;bottom:8px;width:26px;height:26px;padding:0;border-radius:9px;opacity:0;transition:.15s}.calendar-pro-day:hover .calendar-day-add{opacity:1}.calendar-pro-side{display:flex;flex-direction:column;gap:12px}.calendar-side-section,.calendar-signin-card{border:1px solid var(--line);border-radius:20px;padding:14px;background:var(--card)}.calendar-side-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.calendar-side-title h3,.calendar-summary-card h3,.calendar-signin-card h3{margin:5px 0 0}.calendar-source{width:100%;display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;margin-top:7px}.calendar-source.active{border-color:color-mix(in srgb,var(--accent) 65%,var(--line));background:color-mix(in srgb,var(--accent) 11%,var(--card2))}.calendar-source-icon{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;color:#080912;font-size:12px}.calendar-source-icon.private{background:linear-gradient(135deg,var(--accent),var(--accent2))}.calendar-source div b,.calendar-source div small{display:block}.calendar-source div small{color:var(--muted);font-size:10px;margin-top:2px}.calendar-source em{font-size:9px;font-style:normal;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.calendar-create-row{display:flex;gap:7px;margin-top:9px}.calendar-create-row input,.calendar-invite-form input,.calendar-invite-form select{min-width:0;width:100%;background:var(--card2);border:1px solid var(--line);border-radius:11px;color:var(--text);padding:10px;outline:0}.calendar-create-row button{white-space:nowrap}.calendar-summary-card{text-align:center}.calendar-big-dot{display:block;width:42px;height:42px;border-radius:15px;margin:2px auto 10px;box-shadow:0 12px 30px rgba(0,0,0,.25)}.calendar-summary-card p,.calendar-signin-card p,.calendar-modal-intro{color:var(--muted);line-height:1.55;font-size:12px}.calendar-summary-meta{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin:11px 0}.calendar-summary-meta span,.role-chip{border:1px solid var(--line);border-radius:999px;padding:5px 8px;color:var(--muted);font-size:10px}.calendar-signin-card{text-align:center}.calendar-signin-card>span{display:grid;place-items:center;width:44px;height:44px;margin:2px auto 10px;border-radius:15px;background:var(--card2);color:var(--accent)}.calendar-people-modal{width:min(820px,100%)}.calendar-owner-row,.calendar-person-row,.calendar-pending-row{display:flex;align-items:center;gap:11px;border:1px solid var(--line);background:var(--card);border-radius:15px;padding:11px;margin:9px 0}.calendar-owner-row>div:nth-child(2),.calendar-person-row>div:nth-child(2),.calendar-pending-row>div:first-child{min-width:0;flex:1}.calendar-owner-row b,.calendar-owner-row small,.calendar-person-row b,.calendar-person-row small,.calendar-pending-row b,.calendar-pending-row small{display:block;overflow:hidden;text-overflow:ellipsis}.calendar-owner-row small,.calendar-person-row small,.calendar-pending-row small{color:var(--muted);font-size:10px;margin-top:3px}.member-avatar{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;flex:none;background:linear-gradient(135deg,var(--card2),color-mix(in srgb,var(--accent) 25%,var(--card2)));border:1px solid var(--line);font-size:11px;font-weight:900}.member-avatar.owner{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#070812}.owner-badge{font-size:9px;letter-spacing:.09em;padding:5px 7px;border-radius:999px;background:color-mix(in srgb,var(--accent2) 14%,transparent);color:var(--accent2);font-weight:900}.calendar-invite-form{display:grid;grid-template-columns:1fr 160px auto;gap:10px;align-items:end;margin:18px 0}.calendar-invite-form label{display:block;color:var(--muted);font-size:10px;font-weight:900;margin-bottom:6px}.calendar-person-row select{background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:8px}.danger-ghost{color:var(--danger)!important;border-color:color-mix(in srgb,var(--danger) 35%,var(--line))!important;background:color-mix(in srgb,var(--danger) 7%,var(--card2))!important}.calendar-pending{border-top:1px solid var(--line);margin-top:18px;padding-top:15px}.calendar-pending h3{margin:0 0 8px}.calendar-event-modal{width:min(680px,100%)}.calendar-check{display:flex;align-items:center;gap:8px;align-self:center;margin-top:10px;color:var(--muted);font-size:12px}.calendar-modal-actions{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:8px}.calendar-modal-actions .primary{margin-left:auto}
 @media(max-width:1200px){.calendar-pro-layout{grid-template-columns:1fr}.calendar-pro-side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-month-grid{min-width:900px}.calendar-weekdays{min-width:900px}.calendar-pro-main{overflow:auto}}@media(max-width:780px){.calendar-pro-page{padding-top:72px}.calendar-pro-hero{display:block;padding:20px}.calendar-pro-hero h2{font-size:34px}.calendar-pro-hero-actions{justify-content:flex-start;margin-top:16px}.calendar-invite-banner{display:block}.calendar-invite-stack{justify-content:flex-start;margin-top:10px}.calendar-pro-toolbar{grid-template-columns:1fr auto}.calendar-pro-toolbar h3{order:-1;grid-column:1/-1;text-align:left}.calendar-access-badge{justify-self:end}.calendar-pro-side{display:flex}.calendar-invite-form{grid-template-columns:1fr}.calendar-owner-row,.calendar-person-row,.calendar-pending-row{align-items:flex-start;flex-wrap:wrap}.calendar-person-row select{margin-left:49px}.calendar-modal-actions{align-items:stretch;flex-direction:column}.calendar-modal-actions .primary{margin-left:0}.calendar-day-add{opacity:1}}
+
+/* === Planned Out reminders + 10 technology workspace presets === */
+.task-time-line{display:flex!important;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px}
+.task-time-line strong{color:var(--accent2);font-size:11px}
+.reminder-chip{display:inline-flex!important;align-items:center;gap:4px;width:max-content;color:var(--accent)!important;font-size:10px!important;font-weight:900;letter-spacing:.03em}
+.reminder-dot{width:7px;height:7px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
+.preset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.preset-option{position:relative;text-align:left;min-height:118px!important;padding:14px!important;overflow:hidden}
+.preset-option::before{content:"";position:absolute;inset:auto -20% -55% 20%;height:100px;background:radial-gradient(circle,var(--accent),transparent 65%);opacity:.22;pointer-events:none}
+.preset-option.chosen{outline:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--card2))!important}
+.preset-option b,.preset-option small{display:block;position:relative}
+.preset-option b{font-size:13px;margin-bottom:5px}
+.preset-option small{color:var(--muted);line-height:1.45}
+.preset-number{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--line);border-radius:10px;color:var(--accent2);font-weight:1000;margin-bottom:12px}
+.push-status{display:inline-flex;align-items:center;gap:8px;margin:8px 0 12px;color:var(--muted);font-size:12px}
+.push-status i{width:9px;height:9px;border-radius:999px;background:var(--warn)}
+.push-status.granted i{background:var(--accent2);box-shadow:0 0 18px color-mix(in srgb,var(--accent2) 55%,transparent)}
+.push-actions{display:flex;gap:8px;flex-wrap:wrap}
+.reminder-help{color:var(--muted);font-size:11px;line-height:1.5;margin:-5px 0 13px}
+
+/* 01 Neon Grid */
+.preset-neon-grid{--bg:#060713;--side:#0c0f22;--card:#11152c;--card2:#171d3b;--line:#2b3260;--accent:#9d7cff;--accent2:#56e9ff;--danger:#ff719e;--warn:#ffd166;background:linear-gradient(rgba(92,75,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(92,75,255,.035) 1px,transparent 1px),radial-gradient(circle at 80% 0%,rgba(86,233,255,.12),transparent 28%),var(--bg);background-size:34px 34px,34px 34px,auto,auto}
+.preset-neon-grid .module-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.preset-neon-grid .panel,.preset-neon-grid .stat{box-shadow:0 18px 55px rgba(0,0,0,.18)}
+
+/* 02 Aurora Glass */
+.preset-aurora-glass{--bg:#061218;--side:rgba(8,24,31,.72);--card:rgba(18,42,50,.64);--card2:rgba(25,58,69,.62);--line:rgba(139,239,255,.17);--accent:#77f0d4;--accent2:#8fb8ff;--danger:#ff92b2;--warn:#ffd48a;background:radial-gradient(circle at 10% 10%,rgba(102,255,214,.16),transparent 32%),radial-gradient(circle at 88% 20%,rgba(121,142,255,.22),transparent 34%),#061218}
+.preset-aurora-glass .sidebar,.preset-aurora-glass .topbar,.preset-aurora-glass .panel,.preset-aurora-glass .stat,.preset-aurora-glass .task-card{backdrop-filter:blur(24px) saturate(135%)}
+.preset-aurora-glass .hero{border-radius:38px}
+.preset-aurora-glass .stats{grid-template-columns:2fr repeat(4,1fr)}
+
+/* 03 Cyber Deck */
+.preset-cyber-deck{--bg:#0c0810;--side:#120c18;--card:#1a1021;--card2:#24142c;--line:#44264f;--accent:#ff4fd8;--accent2:#ffd84f;--danger:#ff5d79;--warn:#ffd84f;background:linear-gradient(135deg,#0c0810 0%,#140817 55%,#080a12 100%)}
+.preset-cyber-deck .panel,.preset-cyber-deck .stat,.preset-cyber-deck .task-card,.preset-cyber-deck .module-card,.preset-cyber-deck .level-col{border-radius:8px}
+.preset-cyber-deck .hero{border-radius:10px;border-left:4px solid var(--accent)}
+.preset-cyber-deck .sidebar nav button.active{box-shadow:inset 3px 0 0 var(--accent2)}
+
+/* 04 Quantum Blue */
+.preset-quantum-blue{--bg:#030d1c;--side:#071429;--card:#0a1c35;--card2:#0e2948;--line:#173d68;--accent:#45a8ff;--accent2:#7af7ff;--danger:#ff769f;--warn:#ffd36f;background:radial-gradient(circle at 50% -10%,rgba(69,168,255,.25),transparent 38%),#030d1c}
+.preset-quantum-blue .sidebar{width:320px;flex-basis:320px}
+.preset-quantum-blue .stats{grid-template-columns:repeat(3,1fr)}
+.preset-quantum-blue .stat:first-child{grid-column:span 2}
+.preset-quantum-blue .hero-actions{min-width:300px}
+
+/* 05 Holo Split */
+.preset-holo-split{--bg:#0a0714;--side:#120c22;--card:#17102b;--card2:#20163a;--line:#38265b;--accent:#d68cff;--accent2:#61f4d7;flex-direction:row-reverse;background:radial-gradient(circle at 25% 20%,rgba(214,140,255,.15),transparent 30%),radial-gradient(circle at 75% 65%,rgba(97,244,215,.10),transparent 34%),var(--bg)}
+.preset-holo-split .sidebar{border-right:0;border-left:1px solid var(--line)}
+.preset-holo-split .grid.two{grid-template-columns:1.3fr 1fr}
+.preset-holo-split .hero{flex-direction:row-reverse;text-align:right}
+.preset-holo-split .hero p{margin-left:auto}
+
+/* 06 Executive Tech */
+.preset-executive-tech{--bg:#f2f5fa;--side:#ffffff;--card:#ffffff;--card2:#f4f7fb;--text:#152033;--muted:#6d7788;--line:#dce3ed;--accent:#3157d5;--accent2:#0ca88e;--danger:#d83f67;--warn:#b57a11;background:linear-gradient(180deg,#f7f9fc,#edf2f8)}
+.preset-executive-tech .sidebar{box-shadow:12px 0 40px rgba(32,51,86,.06)}
+.preset-executive-tech .panel,.preset-executive-tech .stat,.preset-executive-tech .task-card{box-shadow:0 12px 32px rgba(39,60,96,.07)}
+.preset-executive-tech .hero{background:linear-gradient(135deg,#fff,#eef3ff);border-radius:18px}
+.preset-executive-tech .topbar{background:rgba(247,249,252,.88)}
+
+/* 07 Orbital */
+.preset-orbital{--bg:#05070d;--side:#0d111c;--card:#121825;--card2:#192233;--line:#29374d;--accent:#ff9f43;--accent2:#5ee7df;background:radial-gradient(circle at 70% 20%,rgba(255,159,67,.14),transparent 30%),radial-gradient(circle at 30% 70%,rgba(94,231,223,.10),transparent 32%),#05070d}
+.preset-orbital .sidebar{height:calc(100vh - 28px);top:14px;margin:14px 0 14px 14px;border:1px solid var(--line);border-radius:28px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.preset-orbital .topbar{margin:14px 14px 0 14px;border:1px solid var(--line);border-radius:22px}
+.preset-orbital .page{padding-top:18px}
+
+/* 08 Matrix Flow */
+.preset-matrix-flow{--bg:#030806;--side:#06100a;--card:#09170f;--card2:#0d2116;--line:#183723;--accent:#36f27f;--accent2:#b8ff56;--danger:#ff687f;--warn:#e8ff68;background:linear-gradient(rgba(54,242,127,.025) 1px,transparent 1px),#030806;background-size:100% 24px}
+.preset-matrix-flow .eyebrow,.preset-matrix-flow .topbar h1,.preset-matrix-flow .level-col h3{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.preset-matrix-flow .task-card,.preset-matrix-flow .module-card{border-left:3px solid color-mix(in srgb,var(--accent) 55%,var(--line))}
+.preset-matrix-flow .grid.two{grid-template-columns:.9fr 1.5fr}
+
+/* 09 Signal Stack */
+.preset-signal-stack{--bg:#090c12;--side:#0e131c;--card:#151c28;--card2:#1d2736;--line:#344259;--accent:#ffb84d;--accent2:#55c7ff;display:block;background:linear-gradient(180deg,#090c12,#0b1018)}
+.preset-signal-stack .sidebar{width:100%;height:auto;position:sticky;top:0;z-index:20;display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;gap:16px;padding:12px 18px;border-right:0;border-bottom:1px solid var(--line)}
+.preset-signal-stack .brand{margin:0}
+.preset-signal-stack .quick{width:auto;margin:0}
+.preset-signal-stack .sidebar nav{flex-direction:row;overflow:auto;gap:4px}
+.preset-signal-stack .sidebar nav button{white-space:nowrap}
+.preset-signal-stack .sync-card{margin:0;padding:9px 11px;min-width:180px}
+.preset-signal-stack .sync-card small{display:none}
+.preset-signal-stack .main{width:100%}
+.preset-signal-stack .topbar{top:76px}
+.preset-signal-stack .page{max-width:1500px}
+
+/* 10 Zen Future */
+.preset-zen-future{--bg:#0b0f14;--side:#10161c;--card:#151d24;--card2:#1a242d;--line:#293640;--accent:#89a9ff;--accent2:#8ee1ca;background:linear-gradient(160deg,#0b0f14,#0e151a)}
+.preset-zen-future .sidebar{width:230px;flex-basis:230px}
+.preset-zen-future .page{max-width:1280px;padding:34px}
+.preset-zen-future .hero{padding:38px;border-radius:34px}
+.preset-zen-future .stats{gap:20px}
+.preset-zen-future .panel,.preset-zen-future .stat{border-radius:28px}
+.preset-zen-future .module-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+
+@media(max-width:1100px){
+  .preset-neon-grid .module-grid{grid-template-columns:repeat(2,1fr)}
+  .preset-quantum-blue .stats,.preset-aurora-glass .stats{grid-template-columns:repeat(2,1fr)}
+  .preset-quantum-blue .stat:first-child{grid-column:auto}
+  .preset-holo-split .grid.two,.preset-matrix-flow .grid.two{grid-template-columns:1fr}
+}
+@media(max-width:780px){
+  .preset-holo-split{flex-direction:initial}
+  .preset-holo-split .sidebar{border-left:0;border-right:1px solid var(--line)}
+  .preset-orbital .sidebar{height:100vh;top:0;margin:0;border-radius:0}
+  .preset-orbital .topbar{margin:0;border-radius:0;border-left:0;border-right:0;border-top:0}
+  .preset-signal-stack{display:block}
+  .preset-signal-stack .sidebar{width:284px;height:100vh;position:fixed;display:block;padding:22px 16px;border-right:1px solid var(--line);border-bottom:0;top:0;z-index:30}
+  .preset-signal-stack .brand{margin-bottom:20px}
+  .preset-signal-stack .quick{width:100%;margin-bottom:18px}
+  .preset-signal-stack .sidebar nav{display:flex;flex-direction:column;overflow:visible}
+  .preset-signal-stack .sync-card{margin-top:20px;padding:14px}
+  .preset-signal-stack .sync-card small{display:block}
+  .preset-signal-stack .topbar{top:0}
+  .preset-grid{grid-template-columns:1fr}
+}

@@ -5,6 +5,12 @@ export type Status = 'planned' | 'active' | 'blocked' | 'done';
 export type AppView = 'dashboard' | 'planner' | 'calendar' | 'board' | 'focus' | 'files' | 'knowledge' | 'habits' | 'journal' | 'finance' | 'health' | 'learning' | 'travel' | 'contacts' | 'analytics' | 'templates' | 'settings';
 export type ModuleName = 'knowledge'|'habit'|'journal'|'finance'|'health'|'learning'|'travel'|'contact'|'meal'|'fitness'|'medication'|'subscription'|'risk'|'issue'|'vault'|'automation';
 
+export const visualPresets = [
+  'neon-grid','aurora-glass','cyber-deck','quantum-blue','holo-split',
+  'executive-tech','orbital','matrix-flow','signal-stack','zen-future'
+] as const;
+export type VisualPreset = typeof visualPresets[number];
+
 export type PlannerTask = {
   id: string;
   parentId: string | null;
@@ -19,6 +25,8 @@ export type PlannerTask = {
   status: Status;
   area: string;
   estimateMinutes: number;
+  notifyEnabled: boolean;
+  reminderMinutes: number;
   tags: string[];
   links: string[];
   createdAt: string;
@@ -58,6 +66,7 @@ export type AppState = {
   files: PlannerFile[];
   records: ModuleRecord[];
   theme: string;
+  visualPreset: VisualPreset;
   density: 'comfortable' | 'compact';
   lastView: AppView;
 };

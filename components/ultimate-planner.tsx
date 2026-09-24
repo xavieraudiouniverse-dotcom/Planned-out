@@ -6,7 +6,8 @@ import { getSupabase } from '@/lib/supabase';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
 import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
 import { CollaborativeCalendar } from '@/components/collaborative-calendar';
-import { plannerLevels, type AppState, type AppView, type ModuleName, type ModuleRecord, type PlannerFile, type PlannerLevel, type PlannerTask, type Priority, type Status } from '@/lib/types';
+import { disablePushNotifications, enablePushNotifications, registerPushWorker } from '@/lib/push';
+import { plannerLevels, type AppState, type AppView, type ModuleName, type ModuleRecord, type PlannerFile, type PlannerLevel, type PlannerTask, type Priority, type Status, type VisualPreset } from '@/lib/types';
 
 const STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
 const MEMORY_KEY = 'xavier-planner-os-memory-v1';
@@ -62,9 +63,35 @@ const templates = [
   { name: 'Family Life Planner', category: 'Home', details: 'Birthdays, bills, school, meals, appointments, chores, documents and shared goals.' }
 ];
 
+
+const visualPresetOptions: Array<{ id: VisualPreset; name: string; description: string }> = [
+  { id: 'neon-grid', name: 'Neon Grid', description: 'Purple/cyan command grid with dense futuristic information surfaces.' },
+  { id: 'aurora-glass', name: 'Aurora Glass', description: 'Floating translucent panels with soft teal and blue aurora lighting.' },
+  { id: 'cyber-deck', name: 'Cyber Deck', description: 'Sharper magenta/yellow control-deck geometry and compact technical cards.' },
+  { id: 'quantum-blue', name: 'Quantum Blue', description: 'Deep blue analytical layout with a wider navigation command rail.' },
+  { id: 'holo-split', name: 'Holo Split', description: 'Right-side navigation with a mirrored holographic workspace composition.' },
+  { id: 'executive-tech', name: 'Executive Tech', description: 'Bright premium technology workspace for professional daily planning.' },
+  { id: 'orbital', name: 'Orbital', description: 'Floating navigation capsule and detached command surfaces.' },
+  { id: 'matrix-flow', name: 'Matrix Flow', description: 'Green data-stream aesthetic with monospaced control accents.' },
+  { id: 'signal-stack', name: 'Signal Stack', description: 'Desktop horizontal command rail with content stacked underneath.' },
+  { id: 'zen-future', name: 'Zen Future', description: 'Quiet, spacious future-minimal layout with focused information density.' }
+];
+
+const reminderOptions = [
+  { minutes: 0, label: 'At task time' },
+  { minutes: 5, label: '5 minutes before' },
+  { minutes: 10, label: '10 minutes before' },
+  { minutes: 15, label: '15 minutes before' },
+  { minutes: 30, label: '30 minutes before' },
+  { minutes: 60, label: '1 hour before' },
+  { minutes: 180, label: '3 hours before' },
+  { minutes: 1440, label: '1 day before' },
+  { minutes: 10080, label: '1 week before' }
+];
+
 function blankTask(level: PlannerLevel = 'daily', parentId: string | null = null): PlannerTask {
   const date = todayKey();
-  return { id: uid(), parentId, title: '', notes: '', level, startDate: date, dueDate: date, startTime: '', endTime: '', priority: 'medium', status: 'planned', area: 'Life', estimateMinutes: 60, tags: [], links: [], createdAt: now(), updatedAt: now() };
+  return { id: uid(), parentId, title: '', notes: '', level, startDate: date, dueDate: date, startTime: '', endTime: '', priority: 'medium', status: 'planned', area: 'Life', estimateMinutes: 60, notifyEnabled: false, reminderMinutes: 15, tags: [], links: [], createdAt: now(), updatedAt: now() };
 }
 
 function blankRecord(module: ModuleName): ModuleRecord {
@@ -86,6 +113,7 @@ function seedState(): AppState {
       { ...blankRecord('journal'), title: 'Daily review', body: 'What moved forward today? What needs to change tomorrow?', data: { mood: 7, energy: 7 } }
     ],
     theme: 'midnight',
+    visualPreset: 'neon-grid',
     density: 'comfortable',
     lastView: 'dashboard'
   };
@@ -98,7 +126,7 @@ function safeRead(): AppState {
     if (!raw) return seedState();
     const parsed = JSON.parse(raw) as Partial<AppState>;
     const seed = seedState();
-    return { tasks: parsed.tasks || seed.tasks, files: parsed.files || [], records: parsed.records || seed.records, theme: parsed.theme || 'midnight', density: parsed.density || 'comfortable', lastView: parsed.lastView || 'dashboard' };
+    return { tasks: parsed.tasks || seed.tasks, files: parsed.files || [], records: parsed.records || seed.records, theme: parsed.theme || 'midnight', visualPreset: parsed.visualPreset || 'neon-grid', density: parsed.density || 'comfortable', lastView: parsed.lastView || 'dashboard' };
   } catch { return seedState(); }
 }
 
@@ -106,6 +134,18 @@ function percentDone(tasks: PlannerTask[]) { return tasks.length ? Math.round((t
 function childrenOf(tasks: PlannerTask[], id: string) { return tasks.filter((task) => task.parentId === id); }
 function lineage(tasks: PlannerTask[], task: PlannerTask) { const result: PlannerTask[] = []; let cursor: PlannerTask | undefined = task; const seen = new Set<string>(); while (cursor?.parentId && !seen.has(cursor.parentId)) { seen.add(cursor.parentId); const parent = tasks.find((item) => item.id === cursor?.parentId); if (!parent) break; result.unshift(parent); cursor = parent; } return result; }
 function dateLabel(value: string) { return new Date(`${value}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); }
+function taskDateTimeLabel(task: PlannerTask): string {
+  const time = task.startTime ? ` · ${task.startTime}${task.endTime ? `–${task.endTime}` : ''}` : ' · Any time';
+  return `${taskDateTimeLabel(task)}${time}`;
+}
+function taskReminderAt(task: PlannerTask) {
+  if (!task.notifyEnabled || !task.dueDate) return null;
+  const time = task.startTime || '09:00';
+  const target = new Date(`${task.dueDate}T${time}:00`);
+  if (Number.isNaN(target.getTime())) return null;
+  target.setMinutes(target.getMinutes() - Math.max(0, task.reminderMinutes || 0));
+  return target.toISOString();
+}
 function levelLabel(level: PlannerLevel) { return level[0].toUpperCase() + level.slice(1); }
 function moduleTitle(module: ModuleName) { return modules.find((item) => item.module === module)?.title || module; }
 function unique<T>(items: T[]) { return [...new Set(items)]; }
@@ -131,6 +171,7 @@ export function UltimatePlanner() {
   const [notice, setNotice] = useState('');
   const [aiProgress, setAiProgress] = useState('');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pushPermission, setPushPermission] = useState<string>('default');
   const [selectedModule, setSelectedModule] = useState<ModuleName>('knowledge');
   const [memory, setMemory] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -149,6 +190,12 @@ export function UltimatePlanner() {
     const { data: sub } = sb.auth.onAuthStateChange((_event, session) => { setUser(session?.user || null); if (session?.user) void loadCloud(session.user.id); });
     return () => sub.subscription.unsubscribe();
   }, [sb]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if ('Notification' in window) setPushPermission(Notification.permission);
+    void registerPushWorker();
+  }, []);
 
   const selectedTask = state.tasks.find((task) => task.id === selectedTaskId) || null;
   const filteredTasks = useMemo(() => state.tasks.filter((task) => [task.title, task.notes, task.level, task.area, ...task.tags].join(' ').toLowerCase().includes(query.toLowerCase())), [state.tasks, query]);
@@ -175,7 +222,7 @@ export function UltimatePlanner() {
     if (tasks.error) { alert(tasks.error.message); return; }
     const cloudTasks: PlannerTask[] = (tasks.data || []).map((row) => ({
       id: String(row.id), parentId: row.parent_id || null, title: row.title, notes: row.notes || '', level: row.level as PlannerLevel,
-      startDate: row.start_date || row.due, dueDate: row.due, startTime: row.start_time || '', endTime: row.end_time || '', priority: row.priority || 'medium', status: row.status || (row.done ? 'done' : 'planned'), area: row.tags?.[0] || 'Life', estimateMinutes: row.estimate_minutes || 60, tags: row.tags || [], links: [], createdAt: row.created_at || now(), updatedAt: row.updated_at || now()
+      startDate: row.start_date || row.due, dueDate: row.due, startTime: row.start_time || '', endTime: row.end_time || '', priority: row.priority || 'medium', status: row.status || (row.done ? 'done' : 'planned'), area: row.tags?.[0] || 'Life', estimateMinutes: row.estimate_minutes || 60, notifyEnabled: Boolean(row.notify_enabled), reminderMinutes: Number(row.reminder_minutes ?? 15), tags: row.tags || [], links: [], createdAt: row.created_at || now(), updatedAt: row.updated_at || now()
     }));
     const cloudFiles: PlannerFile[] = (attachments.data || []).map((row) => ({ id: String(row.id), taskId: row.task_id, title: row.name, name: row.name, type: row.mime_type, size: row.file_size, storagePath: row.storage_path, notes: '', createdAt: row.created_at || now() }));
     const trackerRecords: ModuleRecord[] = (trackers.data || []).map((row) => ({ id: String(row.id), module: row.module as ModuleName, title: row.title, body: row.notes || '', date: row.target_date || todayKey(), category: row.module, status: row.status || 'active', tags: [], data: row.data || {}, createdAt: row.created_at || now(), updatedAt: row.updated_at || now() }));
@@ -186,9 +233,44 @@ export function UltimatePlanner() {
 
   async function saveTaskToCloud(task: PlannerTask) {
     if (!sb || !user) return;
-    const payload = { id: task.id, user_id: user.id, parent_id: task.parentId, title: task.title, notes: task.notes, level: task.level, start_date: task.startDate, due: task.dueDate, start_time: task.startTime || null, end_time: task.endTime || null, priority: task.priority, status: task.status, done: task.status === 'done', recurrence: 'none', estimate_minutes: task.estimateMinutes, tags: [task.area, ...task.tags].filter(Boolean), sort_order: 0 };
+    const payload = {
+      id: task.id, user_id: user.id, parent_id: task.parentId, title: task.title, notes: task.notes, level: task.level,
+      start_date: task.startDate, due: task.dueDate, start_time: task.startTime || null, end_time: task.endTime || null,
+      priority: task.priority, status: task.status, done: task.status === 'done', recurrence: 'none',
+      estimate_minutes: task.estimateMinutes, tags: [task.area, ...task.tags].filter(Boolean), sort_order: 0,
+      notify_enabled: task.notifyEnabled, reminder_minutes: task.reminderMinutes,
+      reminder_at: taskReminderAt(task), reminder_sent_at: null
+    };
     const { error } = await sb.from('planner_tasks').upsert(payload);
     if (error) alert(error.message);
+  }
+
+  async function enablePush() {
+    if (!user) return alert('Sign in first so background reminders can sync to this device.');
+    setBusy(true);
+    try {
+      const permission = await enablePushNotifications(user);
+      setPushPermission(permission);
+      alert(permission === 'granted' ? 'Push alerts enabled on this device.' : 'Notification permission was not granted.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not enable push alerts.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disablePush() {
+    if (!user) return;
+    setBusy(true);
+    try {
+      await disablePushNotifications(user);
+      if ('Notification' in window) setPushPermission(Notification.permission);
+      alert('Push subscription removed from this device.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not disable push alerts.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openTask(level: PlannerLevel = 'daily', parentId: string | null = null) {
@@ -345,7 +427,7 @@ export function UltimatePlanner() {
     setMemory((current) => (current.some((item) => item.toLowerCase() === clean.toLowerCase()) ? current : [clean, ...current].slice(0, 60)));
   }
 
-  const shellClass = `xp-shell theme-${state.theme} density-${state.density}`;
+  const shellClass = `xp-shell theme-${state.theme} density-${state.density} preset-${state.visualPreset}`;
   return <div className={shellClass}>
     {mobileOpen && <button className="overlay" aria-label="Close menu" onClick={() => setMobileOpen(false)} />}
     <aside className={`sidebar ${mobileOpen ? 'open' : ''}`}>
@@ -366,7 +448,7 @@ export function UltimatePlanner() {
       {moduleMap[view] && <ModuleView module={moduleMap[view]!} records={visibleRecords} onNew={openRecord} />}
       {view === 'analytics' && <AnalyticsView tasks={state.tasks} records={state.records} files={state.files} />}
       {view === 'templates' && <TemplatesView onInstall={installTemplate} />}
-      {view === 'settings' && <SettingsView state={state} setState={setState} onExport={exportBackup} onImport={() => backupInput.current?.click()} />}
+      {view === 'settings' && <SettingsView state={state} setState={setState} user={user} busy={busy} pushPermission={pushPermission} onEnablePush={() => void enablePush()} onDisablePush={() => void disablePush()} onExport={exportBackup} onImport={() => backupInput.current?.click()} />}
     </main>
     <input ref={fileInput} className="hidden" type="file" multiple onChange={(event) => void attachFiles(event.target.files)} />
     <input ref={backupInput} className="hidden" type="file" accept="application/json,.json" onChange={(event) => void importBackup(event.target.files?.[0])} />
@@ -388,8 +470,11 @@ export function UltimatePlanner() {
 
 function Dashboard({ tasks, files, records, overdue, onOpenTask, onInstallTemplate }: { tasks: PlannerTask[]; files: PlannerFile[]; records: ModuleRecord[]; overdue: number; onOpenTask: (id: string) => void; onInstallTemplate: (name: string) => void }) {
   const active = tasks.filter((task) => task.status === 'active');
-  const urgent = tasks.filter((task) => task.priority === 'urgent' || task.priority === 'high').slice(0, 6);
-  return <section className="page"><div className="hero"><div><p className="eyebrow">LIFE → YEAR → MONTH → WEEK → DAY</p><h2>Everything connected. Nothing lost.</h2><p>Goals, tasks, documents, notes, habits, money, health, learning, travel and people in one command centre.</p></div><div className="hero-actions"><button onClick={() => onInstallTemplate('10 Year Vision → Today')}>Install Life OS</button><button onClick={() => onInstallTemplate('Business Launch War Room')}>Install Business OS</button></div></div><div className="stats"><Stat label="Total tasks" value={tasks.length} note={`${percentDone(tasks)}% completed`} /><Stat label="Active focus" value={active.length} note="In progress now" /><Stat label="Overdue" value={overdue} note="Need reschedule" /><Stat label="Files" value={files.length} note="Vault indexed" /><Stat label="Records" value={records.length} note="Knowledge + life modules" /></div><div className="grid two"><Panel title="Priority cockpit"><div className="task-list">{urgent.map((task) => <button key={task.id} className="task-card" onClick={() => onOpenTask(task.id)}><b>{task.title}</b><span>{levelLabel(task.level)} · {dateLabel(task.dueDate)} · {task.area}</span><Pill tone={task.priority}>{task.priority}</Pill></button>)}</div></Panel><Panel title="Full platform modules"><div className="module-grid">{modules.slice(0, 12).map((item) => <div className="module-card" key={item.module}><span>{item.icon}</span><b>{item.title}</b><small>{item.description}</small></div>)}</div></Panel></div></section>;
+  const pending = tasks
+    .filter((task) => task.status !== 'done')
+    .sort((a, b) => `${a.dueDate}T${a.startTime || '23:59'}`.localeCompare(`${b.dueDate}T${b.startTime || '23:59'}`))
+    .slice(0, 8);
+  return <section className="page"><div className="hero"><div><p className="eyebrow">LIFE → YEAR → MONTH → WEEK → DAY</p><h2>Everything connected. Nothing lost.</h2><p>Goals, tasks, documents, notes, habits, money, health, learning, travel and people in one command centre.</p></div><div className="hero-actions"><button onClick={() => onInstallTemplate('10 Year Vision → Today')}>Install Life OS</button><button onClick={() => onInstallTemplate('Business Launch War Room')}>Install Business OS</button></div></div><div className="stats"><Stat label="Total tasks" value={tasks.length} note={`${percentDone(tasks)}% completed`} /><Stat label="Pending" value={tasks.filter((task) => task.status !== 'done').length} note="Open commitments" /><Stat label="Active focus" value={active.length} note="In progress now" /><Stat label="Overdue" value={overdue} note="Need reschedule" /><Stat label="Files" value={files.length} note={`${records.length} knowledge records`} /></div><div className="grid two"><Panel title="Pending task command"><div className="task-list">{pending.map((task) => <button key={task.id} className="task-card" onClick={() => onOpenTask(task.id)}><div><b>{task.title}</b><span className="task-time-line"><strong>{taskDateTimeLabel(task)}</strong><span>{levelLabel(task.level)} · {task.area}</span></span>{task.notifyEnabled && <span className="reminder-chip"><i className="reminder-dot" />Alert {reminderOptions.find((item) => item.minutes === task.reminderMinutes)?.label || `${task.reminderMinutes}m before`}</span>}</div><Pill tone={task.priority}>{task.priority}</Pill></button>)}</div></Panel><Panel title="Full platform modules"><div className="module-grid">{modules.slice(0, 12).map((item) => <div className="module-card" key={item.module}><span>{item.icon}</span><b>{item.title}</b><small>{item.description}</small></div>)}</div></Panel></div></section>;
 }
 function Stat({ label, value, note }: { label: string; value: number | string; note: string }) { return <div className="stat"><span>{label}</span><strong>{value}</strong><small>{note}</small></div>; }
 function Panel({ title, children }: { title: string; children: React.ReactNode }) { return <div className="panel"><div className="panel-head"><h3>{title}</h3></div>{children}</div>; }
@@ -398,7 +483,7 @@ function PlannerView({ tasks, selectedTask, onSelect, onNew, onEdit, onToggle, o
   return <section className="page"><div className="toolbar"><div>{plannerLevels.map((level) => <button key={level} onClick={() => onNew(level, selectedTask?.id || null)}>{levelLabel(level)}</button>)}</div></div><div className="level-columns">{plannerLevels.map((level) => <div className="level-col" key={level}><h3>{levelLabel(level)}</h3>{tasks.filter((task) => task.level === level).map((task) => <TaskRow key={task.id} task={task} onSelect={onSelect} onEdit={onEdit} onToggle={onToggle} onDelete={onDelete} />)}</div>)}</div></section>;
 }
 function TaskRow({ task, onSelect, onEdit, onToggle, onDelete }: { task: PlannerTask; onSelect: (id: string) => void; onEdit: (task: PlannerTask) => void; onToggle: (task: PlannerTask) => void; onDelete: (id: string) => void }) {
-  return <article className={`task-row ${task.status}`}><button className="check" onClick={() => void onToggle(task)}>{task.status === 'done' ? '✓' : ''}</button><button className="task-main" onClick={() => onSelect(task.id)}><b>{task.title}</b><span>{dateLabel(task.dueDate)} · {task.area} · {task.estimateMinutes}m</span></button><Pill tone={task.priority}>{task.priority}</Pill><button onClick={() => onEdit(task)}>Edit</button><button onClick={() => onDelete(task.id)}>Delete</button></article>;
+  return <article className={`task-row ${task.status}`}><button className="check" onClick={() => void onToggle(task)}>{task.status === 'done' ? '✓' : ''}</button><button className="task-main" onClick={() => onSelect(task.id)}><b>{task.title}</b><span className="task-time-line"><strong>{taskDateTimeLabel(task)}</strong><span>{task.area} · {task.estimateMinutes}m</span></span>{task.notifyEnabled && <span className="reminder-chip"><i className="reminder-dot" />Push reminder</span>}</button><Pill tone={task.priority}>{task.priority}</Pill><button onClick={() => onEdit(task)}>Edit</button><button onClick={() => onDelete(task.id)}>Delete</button></article>;
 }
 
 function CalendarView({ tasks, onSelect }: { tasks: PlannerTask[]; onSelect: (id: string) => void }) {
@@ -407,11 +492,11 @@ function CalendarView({ tasks, onSelect }: { tasks: PlannerTask[]; onSelect: (id
 }
 function BoardView({ tasks, onSelect, onMove }: { tasks: PlannerTask[]; onSelect: (id: string) => void; onMove: (task: PlannerTask, status: Status) => void }) {
   const statuses: Status[] = ['planned','active','blocked','done'];
-  return <section className="page"><div className="board-grid">{statuses.map((status) => <div className="board-col" key={status}><h3>{status}</h3>{tasks.filter((task) => task.status === status).map((task) => <article key={task.id} className="board-card"><button onClick={() => onSelect(task.id)}><b>{task.title}</b><span>{levelLabel(task.level)} · {dateLabel(task.dueDate)}</span></button><div>{statuses.filter((s) => s !== status).map((s) => <button key={s} onClick={() => void onMove(task, s)}>{s}</button>)}</div></article>)}</div>)}</div></section>;
+  return <section className="page"><div className="board-grid">{statuses.map((status) => <div className="board-col" key={status}><h3>{status}</h3>{tasks.filter((task) => task.status === status).map((task) => <article key={task.id} className="board-card"><button onClick={() => onSelect(task.id)}><b>{task.title}</b><span>{levelLabel(task.level)} · {taskDateTimeLabel(task)}</span></button><div>{statuses.filter((s) => s !== status).map((s) => <button key={s} onClick={() => void onMove(task, s)}>{s}</button>)}</div></article>)}</div>)}</div></section>;
 }
 function FocusView({ tasks, onSelect, onDone }: { tasks: PlannerTask[]; onSelect: (id: string) => void; onDone: (task: PlannerTask) => void }) {
   const next = tasks.filter((task) => task.status !== 'done').sort((a, b) => (a.priority === 'urgent' ? -1 : 0) - (b.priority === 'urgent' ? -1 : 0) || a.dueDate.localeCompare(b.dueDate))[0];
-  return <section className="page focus-page">{next ? <div className="focus-card"><span className="eyebrow">ONE THING NOW</span><h2>{next.title}</h2><p>{next.notes || 'No notes yet. Add the files, context and next action in the drawer.'}</p><div><Pill>{levelLabel(next.level)}</Pill><Pill tone={next.priority}>{next.priority}</Pill><Pill>{dateLabel(next.dueDate)}</Pill></div><button className="primary" onClick={() => onSelect(next.id)}>Open workspace</button><button onClick={() => onDone(next)}>Mark done</button></div> : <div className="empty"><h2>All clear.</h2><p>No open focus tasks.</p></div>}</section>;
+  return <section className="page focus-page">{next ? <div className="focus-card"><span className="eyebrow">ONE THING NOW</span><h2>{next.title}</h2><p>{next.notes || 'No notes yet. Add the files, context and next action in the drawer.'}</p><div><Pill>{levelLabel(next.level)}</Pill><Pill tone={next.priority}>{next.priority}</Pill><Pill>{taskDateTimeLabel(next)}</Pill></div><button className="primary" onClick={() => onSelect(next.id)}>Open workspace</button><button onClick={() => onDone(next)}>Mark done</button></div> : <div className="empty"><h2>All clear.</h2><p>No open focus tasks.</p></div>}</section>;
 }
 function FilesView({ files, tasks, onAttach, onOpen }: { files: PlannerFile[]; tasks: PlannerTask[]; onAttach: () => void; onOpen: (file: PlannerFile) => void }) {
   return <section className="page"><div className="toolbar"><button className="primary" onClick={onAttach}>Attach files/photos/digital assets</button></div><div className="file-grid">{files.map((file) => <button className="file-card" key={file.id} onClick={() => onOpen(file)}><span>▣</span><b>{file.name}</b><small>{file.type || 'file'} · {Math.round(file.size/1024)} KB</small><small>{tasks.find((task) => task.id === file.taskId)?.title || 'Inbox vault'}</small></button>)}</div></section>;
@@ -426,15 +511,21 @@ function AnalyticsView({ tasks, records, files }: { tasks: PlannerTask[]; record
   return <section className="page"><div className="stats"><Stat label="Completion" value={`${percentDone(tasks)}%`} note="Overall task progress" /><Stat label="Records" value={records.length} note="Across life modules" /><Stat label="Files" value={files.length} note="Vault items" /><Stat label="High priority" value={tasks.filter((task) => task.priority === 'urgent' || task.priority === 'high').length} note="Critical workload" /></div><div className="grid two"><Panel title="Task levels">{byLevel.map((item) => <div className="bar" key={item.level}><span>{levelLabel(item.level)}</span><i style={{ width: `${Math.min(100, item.count * 12)}%` }} /><b>{item.count}</b></div>)}</Panel><Panel title="Life modules">{byModule.map((item) => <div className="bar" key={item.name}><span>{item.name}</span><i style={{ width: `${Math.min(100, item.count * 20)}%` }} /><b>{item.count}</b></div>)}</Panel></div></section>;
 }
 function TemplatesView({ onInstall }: { onInstall: (name: string) => void }) { return <section className="page"><div className="template-grid">{templates.map((template) => <article className="template" key={template.name}><Pill>{template.category}</Pill><h3>{template.name}</h3><p>{template.details}</p><button onClick={() => onInstall(template.name)}>Install template</button></article>)}</div></section>; }
-function SettingsView({ state, setState, onExport, onImport }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; onExport: () => void; onImport: () => void }) {
-  return <section className="page"><div className="settings-grid"><Panel title="Themes"><div className="choices">{['midnight','glass','aurora','executive','amoled','nature'].map((theme) => <button className={state.theme === theme ? 'chosen' : ''} key={theme} onClick={() => setState((s) => ({ ...s, theme }))}>{theme}</button>)}</div></Panel><Panel title="Density"><div className="choices"><button className={state.density === 'comfortable' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'comfortable' }))}>Comfortable</button><button className={state.density === 'compact' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'compact' }))}>Compact</button></div></Panel><Panel title="Backup"><button onClick={onExport}>Export JSON backup</button><button onClick={onImport}>Import backup</button></Panel></div></section>;
+function SettingsView({ state, setState, user, busy, pushPermission, onEnablePush, onDisablePush, onExport, onImport }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; user: User | null; busy: boolean; pushPermission: string; onEnablePush: () => void; onDisablePush: () => void; onExport: () => void; onImport: () => void }) {
+  return <section className="page"><div className="settings-grid">
+    <Panel title="Technology layouts"><div className="preset-grid">{visualPresetOptions.map((preset, index) => <button className={`preset-option ${state.visualPreset === preset.id ? 'chosen' : ''}`} key={preset.id} onClick={() => setState((s) => ({ ...s, visualPreset: preset.id }))}><span className="preset-number">{String(index + 1).padStart(2, '0')}</span><b>{preset.name}</b><small>{preset.description}</small></button>)}</div></Panel>
+    <Panel title="Push alerts"><p className="reminder-help">Background reminders use your signed-in Supabase account and this device's browser push subscription. Task alerts are delivered from the Planned Out reminder service every minute.</p><span className={`push-status ${pushPermission}`}><i />{!user ? 'Sign in to enable background alerts' : `Browser permission: ${pushPermission}`}</span><div className="push-actions"><button className={pushPermission === 'granted' ? 'chosen' : ''} disabled={busy || !user} onClick={onEnablePush}>Enable on this device</button><button disabled={busy || !user} onClick={onDisablePush}>Remove device alerts</button></div></Panel>
+    <Panel title="Themes"><div className="choices">{['midnight','glass','aurora','executive','amoled','nature'].map((theme) => <button className={state.theme === theme ? 'chosen' : ''} key={theme} onClick={() => setState((s) => ({ ...s, theme }))}>{theme}</button>)}</div></Panel>
+    <Panel title="Density"><div className="choices"><button className={state.density === 'comfortable' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'comfortable' }))}>Comfortable</button><button className={state.density === 'compact' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'compact' }))}>Compact</button></div></Panel>
+    <Panel title="Backup"><button onClick={onExport}>Export JSON backup</button><button onClick={onImport}>Import backup</button></Panel>
+  </div></section>;
 }
 
 function TaskDrawer({ task, parents, children, files, busy, aiProgress, onClose, onEdit, onNewChild, onBreakdown, onAttach, onOpenFile }: { task: PlannerTask; parents: PlannerTask[]; children: PlannerTask[]; files: PlannerFile[]; busy: boolean; aiProgress: string; onClose: () => void; onEdit: (task: PlannerTask) => void; onNewChild: (level?: PlannerLevel, parentId?: string | null) => void; onBreakdown: (engine: 'template' | 'local-ai') => void; onAttach: () => void; onOpenFile: (file: PlannerFile) => void }) {
-  return <aside className="drawer"><button className="x" onClick={onClose}>×</button><p className="eyebrow">TASK WORKSPACE</p><h2>{task.title}</h2><p>{task.notes}</p><div className="drawer-actions"><button onClick={() => onEdit(task)}>Edit</button><button onClick={onAttach}>Attach</button></div><div className="chips"><Pill>{levelLabel(task.level)}</Pill><Pill tone={task.priority}>{task.priority}</Pill><Pill>{task.status}</Pill><Pill>{dateLabel(task.dueDate)}</Pill></div><section><h3>Hierarchy</h3>{parents.map((item) => <div className="mini" key={item.id}>↑ {item.title}</div>)}{children.map((item) => <div className="mini" key={item.id}>↓ {item.title}</div>)}<div className="child-buttons">{plannerLevels.map((level) => <button key={level} onClick={() => onNewChild(level, task.id)}>+ {level}</button>)}</div></section><section><h3>AI breakdown</h3><button disabled={busy} onClick={() => onBreakdown('template')}>Instant smart templates</button><button disabled={busy} onClick={() => onBreakdown('local-ai')}>Run local Qwen/Llama</button>{aiProgress && <small>{aiProgress}</small>}</section><section><h3>Files</h3>{files.map((file) => <button className="mini" key={file.id} onClick={() => onOpenFile(file)}>▣ {file.name}</button>)}<button onClick={onAttach}>Attach more</button></section></aside>;
+  return <aside className="drawer"><button className="x" onClick={onClose}>×</button><p className="eyebrow">TASK WORKSPACE</p><h2>{task.title}</h2><p>{task.notes}</p><div className="drawer-actions"><button onClick={() => onEdit(task)}>Edit</button><button onClick={onAttach}>Attach</button></div><div className="chips"><Pill>{levelLabel(task.level)}</Pill><Pill tone={task.priority}>{task.priority}</Pill><Pill>{task.status}</Pill><Pill>{taskDateTimeLabel(task)}</Pill>{task.notifyEnabled && <Pill>🔔 {reminderOptions.find((item) => item.minutes === task.reminderMinutes)?.label || `${task.reminderMinutes}m before`}</Pill>}</div><section><h3>Hierarchy</h3>{parents.map((item) => <div className="mini" key={item.id}>↑ {item.title}</div>)}{children.map((item) => <div className="mini" key={item.id}>↓ {item.title}</div>)}<div className="child-buttons">{plannerLevels.map((level) => <button key={level} onClick={() => onNewChild(level, task.id)}>+ {level}</button>)}</div></section><section><h3>AI breakdown</h3><button disabled={busy} onClick={() => onBreakdown('template')}>Instant smart templates</button><button disabled={busy} onClick={() => onBreakdown('local-ai')}>Run local Qwen/Llama</button>{aiProgress && <small>{aiProgress}</small>}</section><section><h3>Files</h3>{files.map((file) => <button className="mini" key={file.id} onClick={() => onOpenFile(file)}>▣ {file.name}</button>)}<button onClick={onAttach}>Attach more</button></section></aside>;
 }
 function TaskModal({ form, tasks, editing, setForm, onSubmit, onClose }: { form: PlannerTask; tasks: PlannerTask[]; editing: boolean; setForm: React.Dispatch<React.SetStateAction<PlannerTask>>; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onClose: () => void }) {
-  return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>{editing ? 'Edit task' : 'Create task'}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Notes"><textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={4} /></Field><div className="form-grid"><Field label="Level"><select value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value as PlannerLevel }))}>{plannerLevels.map((level) => <option key={level}>{level}</option>)}</select></Field><Field label="Parent"><select value={form.parentId || ''} onChange={(e) => setForm((f) => ({ ...f, parentId: e.target.value || null }))}><option value="">No parent</option>{tasks.filter((task) => task.id !== form.id).map((task) => <option value={task.id} key={task.id}>{task.level}: {task.title}</option>)}</select></Field><Field label="Start"><input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} /></Field><Field label="Due"><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></Field><Field label="Start time"><input type="time" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} /></Field><Field label="End time"><input type="time" value={form.endTime} onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))}>{['low','medium','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></Field><Field label="Status"><select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))}>{['planned','active','blocked','done'].map((s) => <option key={s}>{s}</option>)}</select></Field><Field label="Area"><input value={form.area} onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))} /></Field><Field label="Estimate minutes"><input type="number" value={form.estimateMinutes} onChange={(e) => setForm((f) => ({ ...f, estimateMinutes: Number(e.target.value) }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save task</button></form></div>;
+  return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>{editing ? 'Edit task' : 'Create task'}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Notes"><textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={4} /></Field><div className="form-grid"><Field label="Level"><select value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value as PlannerLevel }))}>{plannerLevels.map((level) => <option key={level}>{level}</option>)}</select></Field><Field label="Parent"><select value={form.parentId || ''} onChange={(e) => setForm((f) => ({ ...f, parentId: e.target.value || null }))}><option value="">No parent</option>{tasks.filter((task) => task.id !== form.id).map((task) => <option value={task.id} key={task.id}>{task.level}: {task.title}</option>)}</select></Field><Field label="Start date"><input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} /></Field><Field label="Due date"><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></Field><Field label="Start time"><input type="time" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} /></Field><Field label="End time"><input type="time" value={form.endTime} onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))}>{['low','medium','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></Field><Field label="Status"><select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))}>{['planned','active','blocked','done'].map((s) => <option key={s}>{s}</option>)}</select></Field><Field label="Area"><input value={form.area} onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))} /></Field><Field label="Estimate minutes"><input type="number" value={form.estimateMinutes} onChange={(e) => setForm((f) => ({ ...f, estimateMinutes: Number(e.target.value) }))} /></Field><Field label="Task alert"><select value={form.notifyEnabled ? 'on' : 'off'} onChange={(e) => setForm((f) => ({ ...f, notifyEnabled: e.target.value === 'on' }))}><option value="off">No alert</option><option value="on">Push alert</option></select></Field>{form.notifyEnabled && <Field label="Alert timing"><select value={form.reminderMinutes} onChange={(e) => setForm((f) => ({ ...f, reminderMinutes: Number(e.target.value) }))}>{reminderOptions.map((option) => <option value={option.minutes} key={option.minutes}>{option.label}</option>)}</select></Field>}</div>{form.notifyEnabled && <p className="reminder-help">If no start time is set, Planned Out uses 9:00 AM on the due date for the reminder calculation.</p>}<Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save task</button></form></div>;
 }
 function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: ModuleName; form: ModuleRecord; setForm: React.Dispatch<React.SetStateAction<ModuleRecord>>; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onClose: () => void }) {
   const info = modules.find((item) => item.module === module)!;
