@@ -20,6 +20,11 @@ function normalizeSupabaseUrl(raw: string): string | null {
   }
 }
 
+export function getSupabaseHost(): string | null {
+  const url = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL);
+  return url ? new URL(url).host : null;
+}
+
 export function getSupabase() {
   if (client) return client;
 

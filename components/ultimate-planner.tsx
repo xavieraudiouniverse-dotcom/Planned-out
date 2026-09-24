@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { getSupabase } from '@/lib/supabase';
+import { getSupabase, getSupabaseHost } from '@/lib/supabase';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
 import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
 import { CollaborativeCalendar } from '@/components/collaborative-calendar';
@@ -12,6 +12,7 @@ import { plannerLevels, type AppState, type AppView, type ModuleName, type Modul
 const LEGACY_STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
 const STORAGE_PREFIX = 'planned-out-workspace-v3:';
 const MEMORY_PREFIX = 'planned-out-memory-v2:';
+const PENDING_EMAIL_KEY = 'planned-out-pending-email';
 const workspaceStorageKey = (scope: string) => `${STORAGE_PREFIX}${scope}`;
 const workspaceMemoryKey = (scope: string) => `${MEMORY_PREFIX}${scope}`;
 const todayKey = () => new Date().toISOString().slice(0, 10);
@@ -171,6 +172,7 @@ export function UltimatePlanner() {
   const [recordForm, setRecordForm] = useState<ModuleRecord>(() => blankRecord('knowledge'));
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
+  const [verification, setVerification] = useState('');
   const [showAuth, setShowAuth] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -181,6 +183,10 @@ export function UltimatePlanner() {
   const [memory, setMemory] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const backupInput = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setEmail(localStorage.getItem(PENDING_EMAIL_KEY) || '');
+  }, []);
 
   useEffect(() => {
     if (!sb) {
@@ -396,9 +402,47 @@ export function UltimatePlanner() {
   async function signIn(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!sb) return alert('Missing Supabase environment variables.');
     setBusy(true);
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    const address = email.trim();
+    const { error } = await sb.auth.signInWithOtp({ email: address, options: { emailRedirectTo: window.location.origin } });
     setBusy(false);
-    if (error) alert(error.message); else alert('Check your email for the sign-in link.');
+    if (error) alert(error.message);
+    else {
+      localStorage.setItem(PENDING_EMAIL_KEY, address);
+      alert('Check your email. Enter its code here, or copy the verification link and paste it here before opening it.');
+    }
+  }
+  async function verifyInApp(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!sb) return alert('Missing Supabase environment variables.');
+    const value = verification.trim();
+    const address = email.trim();
+    setBusy(true);
+    try {
+      let result;
+      if (/^\d{6}$/.test(value)) {
+        result = await sb.auth.verifyOtp({ email: address, token: value, type: 'email' });
+      } else {
+        const url = new URL(value);
+        const supabaseHost = getSupabaseHost();
+        if (url.protocol !== 'https:' || url.host !== supabaseHost || !url.pathname.endsWith('/auth/v1/verify')) {
+          throw new Error('Paste the original Supabase verification link from your email, or enter its six-digit code.');
+        }
+        const token_hash = url.searchParams.get('token');
+        const type = url.searchParams.get('type');
+        if (!token_hash || !['email', 'magiclink', 'signup'].includes(type || '')) {
+          throw new Error('This email link cannot be used for sign-in. Request a new one.');
+        }
+        result = await sb.auth.verifyOtp({ token_hash, type: type as 'email' | 'magiclink' | 'signup' });
+      }
+      if (result.error) throw result.error;
+      localStorage.removeItem(PENDING_EMAIL_KEY);
+      setVerification('');
+      setShowAuth(false);
+      alert('Signed in on this device.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Verification failed. Request a new email and try again.');
+    } finally {
+      setBusy(false);
+    }
   }
   async function signOut() {
     if (sb) await sb.auth.signOut();
@@ -535,7 +579,7 @@ export function UltimatePlanner() {
     {selectedTask && <TaskDrawer task={selectedTask} parents={lineage(state.tasks, selectedTask)} children={childrenOf(state.tasks, selectedTask.id)} files={state.files.filter((file) => file.taskId === selectedTask.id)} busy={busy} aiProgress={aiProgress} onClose={() => setSelectedTaskId(null)} onEdit={editTask} onNewChild={openTask} onBreakdown={(engine) => void breakdownTask(selectedTask, engine)} onAttach={() => fileInput.current?.click()} onOpenFile={(file) => void openFile(file)} />}
     {taskModal && <TaskModal form={taskForm} tasks={state.tasks} editing={Boolean(editingTask)} setForm={setTaskForm} onSubmit={submitTask} onClose={() => setTaskModal(false)} />}
     {recordModal && <RecordModal module={recordModal} form={recordForm} setForm={setRecordForm} onSubmit={submitRecord} onClose={() => setRecordModal(null)} />}
-    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} busy={busy} onSubmit={signIn} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
+    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} verification={verification} setVerification={setVerification} busy={busy} onSubmit={signIn} onVerify={verifyInApp} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
     <AssistantPanel actions={{
       getContext: assistantContext,
       navigate: setView,
@@ -611,6 +655,6 @@ function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: Mod
   const info = modules.find((item) => item.module === module)!;
   return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>Add {info.title}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Details"><textarea rows={5} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></Field><div className="form-grid"><Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} /></Field><Field label="Category"><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></Field><Field label="Status"><input value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} /></Field><Field label="Amount"><input type="number" value={form.amount || ''} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save entry</button></form></div>;
 }
-function AuthModal({ user, email, setEmail, busy, onSubmit, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; busy: boolean; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
-  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and private calendar stay isolated to this account. Other people only see a shared calendar after you explicitly invite them.</p><button onClick={onSignOut}>Sign out</button></> : <form onSubmit={onSubmit}><p>Email magic link login. Every account gets its own private workspace. Shared calendar access is invitation-only.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send sign-in link'}</button></form>}</div></div>;
+function AuthModal({ user, email, setEmail, verification, setVerification, busy, onSubmit, onVerify, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; verification: string; setVerification: (value: string) => void; busy: boolean; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onVerify: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
+  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and private calendar stay isolated to this account. Other people only see a shared calendar after you explicitly invite them.</p><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSubmit}><p>Sign in with your email. Every account gets its own private workspace.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send sign-in email'}</button></form><form onSubmit={onVerify}><p>Stay in this app to finish signing in. Enter the six-digit code if your email has one. If it only has a link, long-press the link, copy its address without opening it, then paste it below. If you already opened the link in a browser, send a fresh email first.</p><Field label="Email code or copied verification link"><input type="text" value={verification} onChange={(e) => setVerification(e.target.value)} autoComplete="one-time-code" required /></Field><button className="primary" disabled={busy || !email.trim()}>{busy ? 'Verifying…' : 'Verify and sign in here'}</button></form></>}</div></div>;
 }
