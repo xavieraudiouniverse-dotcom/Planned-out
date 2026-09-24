@@ -136,7 +136,7 @@ function lineage(tasks: PlannerTask[], task: PlannerTask) { const result: Planne
 function dateLabel(value: string) { return new Date(`${value}T12:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }); }
 function taskDateTimeLabel(task: PlannerTask): string {
   const time = task.startTime ? ` · ${task.startTime}${task.endTime ? `–${task.endTime}` : ''}` : ' · Any time';
-  return `${taskDateTimeLabel(task)}${time}`;
+  return `${dateLabel(task.dueDate)}${time}`;
 }
 function taskReminderAt(task: PlannerTask) {
   if (!task.notifyEnabled || !task.dueDate) return null;
