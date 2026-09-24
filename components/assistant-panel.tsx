@@ -60,6 +60,18 @@ type AssistantMessage = {
 };
 
 const MODEL_STORAGE_KEY = 'xavier-planner-ai-model-v1';
+const VOICE_STORAGE_KEY = 'planned-out-voice-replies';
+
+type SpeechResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  onresult: ((event: SpeechResult) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
 
 const SUGGESTIONS = [
   'Plan my week',
@@ -84,6 +96,10 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
+  const [listening, setListening] = useState(false);
+  const [voiceReplies, setVoiceReplies] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
+  const recognition = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -91,7 +107,69 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
     if (saved && isModelChoice(saved)) {
       setSelectedModel(saved);
     }
+    setVoiceReplies(window.localStorage.getItem(VOICE_STORAGE_KEY) === 'true');
+    return () => { recognition.current?.stop(); window.speechSynthesis?.cancel(); };
   }, []);
+
+  function speak(reply: string) {
+    if (!voiceReplies || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(reply);
+    utterance.lang = 'en-AU';
+    utterance.rate = 0.96;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function runCommand(value: string): string | null {
+    const task = value.match(/^(?:please )?(?:create|add|make) (?:a )?task(?: called| to)? (.+)$/i);
+    if (task) {
+      actionsRef.current.createTask({ title: task[1].trim() });
+      return `Created the task ${task[1].trim()}.`;
+    }
+    const note = value.match(/^(?:please )?(?:add|create|write) (?:a )?note(?: called| saying)? (.+)$/i);
+    if (note) {
+      actionsRef.current.createRecord('knowledge', note[1].trim());
+      return `Saved the note ${note[1].trim()}.`;
+    }
+    const memory = value.match(/^(?:please )?remember (?:that )?(.+)$/i);
+    if (memory) {
+      actionsRef.current.remember(memory[1].trim());
+      return `I'll remember that: ${memory[1].trim()}.`;
+    }
+    const view = value.match(/^(?:please )?(?:open|show|go to) (calendar|planner|dashboard|board|focus|habits|journal|finance|settings)$/i);
+    if (view) {
+      actionsRef.current.navigate(view[1].toLowerCase() as AppView);
+      return `Opened ${view[1]}.`;
+    }
+    const openTask = value.match(/^(?:please )?open task (.+)$/i);
+    if (openTask) {
+      const found = actionsRef.current.openTask(openTask[1]);
+      return found.found ? `Opened ${found.title}.` : `I couldn't find a task named ${openTask[1]}.`;
+    }
+    return null;
+  }
+
+  function startListening() {
+    if (listening) { recognition.current?.stop(); return; }
+    const browser = window as typeof window & { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
+    const SpeechRecognition = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+    if (!SpeechRecognition) { setVoiceError('Voice input is unavailable in this browser. You can still type commands.'); return; }
+    setVoiceError('');
+    try {
+      const instance = new SpeechRecognition();
+      recognition.current = instance;
+      instance.lang = navigator.language || 'en-AU';
+      instance.interimResults = false;
+      instance.onresult = (event) => {
+        const transcript = event.results[0]?.[0]?.transcript?.trim();
+        if (transcript) { setInput(transcript); submit(transcript); }
+      };
+      instance.onerror = () => { setVoiceError('Microphone permission or speech recognition failed. Try again or type your command.'); setListening(false); };
+      instance.onend = () => setListening(false);
+      instance.start();
+      setListening(true);
+    } catch { setVoiceError('Could not start the microphone.'); setListening(false); }
+  }
 
   function chooseModel(value: string) {
     if (!isModelChoice(value)) return;
@@ -121,7 +199,8 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
     setBusy(true);
 
     try {
-      const result = await serverAIChat(
+      const commandReply = runCommand(text);
+      const result = commandReply ? { text: commandReply, model: 'Voice command' } : await serverAIChat(
         text,
         actionsRef.current.getContext(),
         history,
@@ -138,6 +217,7 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
           model: result.model,
         },
       ]);
+      speak(result.text);
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -227,6 +307,7 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
             >
               ×
             </button>
+            <button type="button" onClick={() => { const next = !voiceReplies; setVoiceReplies(next); localStorage.setItem(VOICE_STORAGE_KEY, String(next)); if (!next) window.speechSynthesis?.cancel(); }} aria-label={voiceReplies ? 'Turn off spoken replies' : 'Turn on spoken replies'} title="Speak AI replies">{voiceReplies ? '🔊' : '🔇'}</button>
           </header>
 
           <div className="assistant-log">
@@ -314,7 +395,9 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
             <button type="submit" disabled={busy || !input.trim()}>
               Send
             </button>
+            <button type="button" onClick={startListening} disabled={busy} aria-label={listening ? 'Stop listening' : 'Talk to Xavier AI'} aria-pressed={listening}>{listening ? 'Listening…' : '🎙 Talk'}</button>
           </form>
+          {voiceError && <p role="alert" className="reminder-help">{voiceError}</p>}
         </section>
       )}
     </>

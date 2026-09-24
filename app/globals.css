@@ -26,6 +26,8 @@
 
 /* === Planned Out reminders + 10 technology workspace presets === */
 .task-time-line{display:flex!important;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px}
+.assistant-input input{min-width:0}
+.assistant-input button[aria-label="Talk to Xavier AI"],.assistant-input button[aria-label="Stop listening"]{flex:0 0 auto;padding:0 9px}
 .task-time-line strong{color:var(--accent2);font-size:11px}
 .reminder-chip{display:inline-flex!important;align-items:center;gap:4px;width:max-content;color:var(--accent)!important;font-size:10px!important;font-weight:900;letter-spacing:.03em}
 .reminder-dot{width:7px;height:7px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}

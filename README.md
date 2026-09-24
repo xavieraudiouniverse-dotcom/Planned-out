@@ -10,7 +10,9 @@ A mobile-first life operating system planner for Vercel + Supabase.
 - Supabase Auth, Postgres, RLS, Storage and private vault bucket.
 - Knowledge base, habits, journal, finance, health, learning, travel, contacts, subscriptions, risks, issues, automations and templates.
 - Free instant planning templates.
-- Optional on-device Qwen/Llama through WebLLM on compatible browsers/devices.
+- Voice input, spoken AI replies and direct commands for tasks, notes and navigation.
+- Repeating tasks and shared events, calendar chat, invitation email, private iCal subscriptions, and per-account record sync.
+- Background push delivery through a protected endpoint and Supabase minute scheduler after server secrets are configured.
 - JSON backup/import for portability.
 
 ## Deploy
@@ -22,4 +24,4 @@ A mobile-first life operating system planner for Vercel + Supabase.
 
 ## Notes
 
-The app works locally without login. Sign in enables Supabase sync for core planner tasks and private vault uploads. On-device Qwen/Llama requires WebGPU support and can be heavy on older phones; instant templates are always available.
+The app works locally without login. Sign in enables Supabase sync for planner tasks, records, memory, and private vault uploads. External Google and Outlook iCal feeds are read-only. Voice input depends on browser speech recognition support. See [daily essentials setup](docs/DAILY-ESSENTIALS-SETUP.md) for the required migration and delivery configuration.

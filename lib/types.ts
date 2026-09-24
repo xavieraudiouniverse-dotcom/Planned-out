@@ -1,3 +1,4 @@
+import type { RepeatRule } from './recurrence';
 export const plannerLevels = ['life','decade','yearly','quarterly','monthly','weekly','daily','hourly','task','subtask'] as const;
 export type PlannerLevel = typeof plannerLevels[number];
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
@@ -27,6 +28,7 @@ export type PlannerTask = {
   estimateMinutes: number;
   notifyEnabled: boolean;
   reminderMinutes: number;
+  recurrence?: RepeatRule;
   tags: string[];
   links: string[];
   createdAt: string;

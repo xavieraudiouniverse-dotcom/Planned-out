@@ -2,7 +2,7 @@ import type { User } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 
 export const PLANNED_OUT_VAPID_PUBLIC_KEY =
-  'BHq-nYJk4haPLUqTwes05YqT_m7f5IyebsJnPxEQZBo9QWmXLmkUcBWeLffY_UaXIHcwdB38128g3Gl_vLzIHf4';
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BHq-nYJk4haPLUqTwes05YqT_m7f5IyebsJnPxEQZBo9QWmXLmkUcBWeLffY_UaXIHcwdB38128g3Gl_vLzIHf4';
 
 function toApplicationServerKey(value: string) {
   const padding = '='.repeat((4 - (value.length % 4)) % 4);

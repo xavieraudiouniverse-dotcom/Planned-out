@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { getSupabase, getSupabaseHost } from '@/lib/supabase';
+import { nextOccurrence } from '@/lib/recurrence';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
 import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
 import { CollaborativeCalendar } from '@/components/collaborative-calendar';
@@ -95,7 +96,7 @@ const reminderOptions = [
 
 function blankTask(level: PlannerLevel = 'daily', parentId: string | null = null): PlannerTask {
   const date = todayKey();
-  return { id: uid(), parentId, title: '', notes: '', level, startDate: date, dueDate: date, startTime: '', endTime: '', priority: 'medium', status: 'planned', area: 'Life', estimateMinutes: 60, notifyEnabled: false, reminderMinutes: 15, tags: [], links: [], createdAt: now(), updatedAt: now() };
+  return { id: uid(), parentId, title: '', notes: '', level, startDate: date, dueDate: date, startTime: '', endTime: '', priority: 'medium', status: 'planned', area: 'Life', estimateMinutes: 60, notifyEnabled: false, reminderMinutes: 15, recurrence: 'none', tags: [], links: [], createdAt: now(), updatedAt: now() };
 }
 
 function blankRecord(module: ModuleName): ModuleRecord {
@@ -201,7 +202,9 @@ export function UltimatePlanner() {
       const local = safeRead(scope);
       setUser(nextUser);
       setState(local);
-      setView(local.lastView);
+      const hasInvitation = new URLSearchParams(window.location.search).has('calendarInvite');
+      setView(hasInvitation ? 'calendar' : local.lastView);
+      if (hasInvitation) setShowAuth(!nextUser);
 
       if (typeof window !== 'undefined') {
         try {
@@ -256,42 +259,82 @@ export function UltimatePlanner() {
 
   async function loadCloud(userId: string, localState: AppState = safeRead(userId)) {
     if (!sb) return;
-    const [tasks, attachments, trackers, notes] = await Promise.all([
+    const [tasks, attachments, trackers, notes, appRecords, vault, cloudMemory] = await Promise.all([
       sb.from('planner_tasks').select('*').eq('user_id', userId).limit(5000),
       sb.from('planner_attachments').select('*').eq('user_id', userId).limit(5000),
       sb.from('xp_trackers').select('*').eq('user_id', userId).limit(5000),
-      sb.from('xp_notes').select('*').eq('user_id', userId).limit(5000)
+      sb.from('xp_notes').select('*').eq('user_id', userId).limit(5000),
+      sb.from('xp_app_records').select('*').eq('user_id', userId).limit(5000),
+      sb.from('xp_vault_items').select('*').eq('user_id', userId).limit(5000),
+      sb.from('xp_ai_memory').select('content').eq('user_id', userId).limit(1000)
     ]);
     if (tasks.error) { alert(tasks.error.message); return; }
     const cloudTasks: PlannerTask[] = (tasks.data || []).map((row) => ({
       id: String(row.id), parentId: row.parent_id || null, title: row.title, notes: row.notes || '', level: row.level as PlannerLevel,
-      startDate: row.start_date || row.due, dueDate: row.due, startTime: row.start_time || '', endTime: row.end_time || '', priority: row.priority || 'medium', status: row.status || (row.done ? 'done' : 'planned'), area: row.tags?.[0] || 'Life', estimateMinutes: row.estimate_minutes || 60, notifyEnabled: Boolean(row.notify_enabled), reminderMinutes: Number(row.reminder_minutes ?? 15), tags: row.tags || [], links: [], createdAt: row.created_at || now(), updatedAt: row.updated_at || now()
+      startDate: row.start_date || row.due, dueDate: row.due, startTime: row.start_time || '', endTime: row.end_time || '', priority: row.priority || 'medium', status: row.status || (row.done ? 'done' : 'planned'), area: row.tags?.[0] || 'Life', estimateMinutes: row.estimate_minutes || 60, notifyEnabled: Boolean(row.notify_enabled), reminderMinutes: Number(row.reminder_minutes ?? 15), recurrence: row.recurrence || 'none', tags: (row.tags || []).slice(1), links: [], createdAt: row.created_at || now(), updatedAt: row.updated_at || now()
     }));
-    const cloudFiles: PlannerFile[] = (attachments.data || []).map((row) => ({ id: String(row.id), taskId: row.task_id, title: row.name, name: row.name, type: row.mime_type, size: row.file_size, storagePath: row.storage_path, notes: '', createdAt: row.created_at || now() }));
+    const taskSyncMarker = `planned-out-task-sync-v1:${userId}`;
+    let workspaceTasks = cloudTasks;
+    let taskSyncSucceeded = true;
+    if (localState.tasks.length && !localStorage.getItem(taskSyncMarker)) {
+      const remoteById = new Map(cloudTasks.map((task) => [task.id, task]));
+      const pending = localState.tasks.filter((task) => !remoteById.has(task.id) || task.updatedAt > remoteById.get(task.id)!.updatedAt);
+      const ordered = [...pending].sort((a, b) => lineage(localState.tasks, a).length - lineage(localState.tasks, b).length);
+      for (const task of ordered) if (!await saveTaskToCloud(task, userId)) taskSyncSucceeded = false;
+      workspaceTasks = [...remoteById.values()].filter((task) => !pending.some((item) => item.id === task.id)).concat(pending);
+    }
+    if (taskSyncSucceeded) localStorage.setItem(taskSyncMarker, '1');
+    const cloudFiles: PlannerFile[] = [...(attachments.data || []).map((row) => ({ id: String(row.id), taskId: row.task_id, title: row.name, name: row.name, type: row.mime_type, size: row.file_size, storagePath: row.storage_path, notes: '', createdAt: row.created_at || now() })), ...(vault.data || []).filter((row) => row.storage_path).map((row) => ({ id: String(row.id), taskId: row.metadata?.taskId || null, title: row.title, name: row.title, type: row.category, size: Number(row.metadata?.size || 0), storagePath: row.storage_path, notes: row.notes || '', createdAt: row.created_at || now() }))];
     const trackerRecords: ModuleRecord[] = (trackers.data || []).map((row) => ({ id: String(row.id), module: row.module as ModuleName, title: row.title, body: row.notes || '', date: row.target_date || todayKey(), category: row.module, status: row.status || 'active', tags: [], data: row.data || {}, createdAt: row.created_at || now(), updatedAt: row.updated_at || now() }));
     const noteRecords: ModuleRecord[] = (notes.data || []).map((row) => ({ id: String(row.id), module: 'knowledge', title: row.title, body: row.body || '', date: (row.created_at || now()).slice(0, 10), category: row.kind || 'note', status: 'active', tags: row.tags || [], data: row.metadata || {}, createdAt: row.created_at || now(), updatedAt: row.updated_at || now() }));
-    const cloudRecords = [...trackerRecords, ...noteRecords];
+    const cloudRecords = [...trackerRecords, ...noteRecords, ...(appRecords.data || []).map((row) => row.payload as ModuleRecord)];
+    const mergedRecords = new Map<string, ModuleRecord>(cloudRecords.map((record) => [record.id, record]));
+    for (const record of localState.records) {
+      const remote = mergedRecords.get(record.id);
+      if (!remote || record.updatedAt > remote.updatedAt) mergedRecords.set(record.id, record);
+    }
+    if (!appRecords.error) {
+      const pending = [...mergedRecords.values()].filter((record) => !cloudRecords.some((remote) => remote.id === record.id && remote.updatedAt >= record.updatedAt));
+      if (pending.length) {
+        const { error } = await sb.from('xp_app_records').upsert(pending.map((record) => ({ id: record.id, user_id: userId, payload: record, updated_at: record.updatedAt })));
+        if (error) alert(`Some notes could not sync: ${error.message}`);
+      }
+    }
     setState({
       ...localState,
-      tasks: cloudTasks.length ? cloudTasks : localState.tasks,
+      tasks: workspaceTasks,
       files: cloudFiles.length ? cloudFiles : localState.files,
-      records: cloudRecords.length ? cloudRecords : localState.records
+      records: [...mergedRecords.values()]
     });
+    if (!cloudMemory.error) {
+      let localMemories: string[] = [];
+      try { const stored = JSON.parse(localStorage.getItem(workspaceMemoryKey(userId)) || '[]'); if (Array.isArray(stored)) localMemories = stored; } catch { /* The cloud copy remains available. */ }
+      const missing = localMemories.filter((item) => !(cloudMemory.data || []).some((row) => row.content === item));
+      if (missing.length) void sb.from('xp_ai_memory').insert(missing.map((content) => ({ user_id: userId, content })));
+      setMemory([...new Set([...(cloudMemory.data || []).map((row) => row.content), ...localMemories])]);
+    }
     alert('Loaded your private Supabase workspace.');
   }
 
-  async function saveTaskToCloud(task: PlannerTask) {
-    if (!sb || !user) return;
+  async function saveTaskToCloud(task: PlannerTask, accountId = user?.id): Promise<boolean> {
+    if (!sb || !accountId) return false;
     const payload = {
-      id: task.id, user_id: user.id, parent_id: task.parentId, title: task.title, notes: task.notes, level: task.level,
+      id: task.id, user_id: accountId, parent_id: task.parentId, title: task.title, notes: task.notes, level: task.level,
       start_date: task.startDate, due: task.dueDate, start_time: task.startTime || null, end_time: task.endTime || null,
-      priority: task.priority, status: task.status, done: task.status === 'done', recurrence: 'none',
+      priority: task.priority, status: task.status, done: task.status === 'done', recurrence: task.recurrence || 'none',
       estimate_minutes: task.estimateMinutes, tags: [task.area, ...task.tags].filter(Boolean), sort_order: 0,
       notify_enabled: task.notifyEnabled, reminder_minutes: task.reminderMinutes,
       reminder_at: taskReminderAt(task), reminder_sent_at: null
     };
     const { error } = await sb.from('planner_tasks').upsert(payload);
     if (error) alert(error.message);
+    return !error;
+  }
+
+  async function saveRecordToCloud(record: ModuleRecord) {
+    if (!sb || !user) return;
+    const { error } = await sb.from('xp_app_records').upsert({ id: record.id, user_id: user.id, payload: record, updated_at: record.updatedAt });
+    if (error) alert(`Entry saved here, but cloud sync failed: ${error.message}`);
   }
 
   async function enablePush() {
@@ -367,15 +410,22 @@ export function UltimatePlanner() {
   }
   async function toggleTask(task: PlannerTask, status: Status = task.status === 'done' ? 'active' : 'done') {
     const next = { ...task, status, updatedAt: now() };
-    mutate((current) => ({ ...current, tasks: current.tasks.map((item) => item.id === task.id ? next : item) }));
+    const nextDate = status === 'done' && task.status !== 'done' ? nextOccurrence(task.dueDate, task.recurrence || 'none', todayKey()) : null;
+    const repeated = nextDate ? { ...task, id: uid(), dueDate: nextDate, startDate: nextDate, status: 'planned' as const, createdAt: now(), updatedAt: now() } : null;
+    mutate((current) => ({ ...current, tasks: [...(repeated ? [repeated] : []), ...current.tasks.map((item) => item.id === task.id ? next : item)] }));
     await saveTaskToCloud(next);
+    if (repeated) await saveTaskToCloud(repeated);
   }
-  function deleteTask(taskId: string) {
+  async function deleteTask(taskId: string) {
     const collect = new Set<string>([taskId]);
     let added = true;
     while (added) { added = false; for (const task of state.tasks) if (task.parentId && collect.has(task.parentId) && !collect.has(task.id)) { collect.add(task.id); added = true; } }
+    if (sb && user) {
+      const { error } = await sb.from('planner_tasks').delete().in('id', [...collect]).eq('user_id', user.id);
+      if (error) return alert(`Could not delete synced tasks: ${error.message}`);
+    }
     mutate((current) => ({ ...current, tasks: current.tasks.filter((task) => !collect.has(task.id)), files: current.files.filter((file) => !file.taskId || !collect.has(file.taskId)) }));
-    setSelectedTaskId(null); alert('Task and child tasks removed locally.');
+    setSelectedTaskId(null); alert('Task and child tasks removed.');
   }
 
   async function breakdownTask(task: PlannerTask, engine: 'template' | 'local-ai') {
@@ -391,11 +441,12 @@ export function UltimatePlanner() {
   }
 
   function openRecord(module: ModuleName) { setRecordForm(blankRecord(module)); setRecordModal(module); }
-  function submitRecord(event: React.FormEvent<HTMLFormElement>) {
+  async function submitRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const record = { ...recordForm, title: recordForm.title.trim(), updatedAt: now() };
     if (!record.title) return;
     mutate((current) => ({ ...current, records: [record, ...current.records] }));
+    await saveRecordToCloud(record);
     setRecordModal(null); alert(`${moduleTitle(record.module)} entry added.`);
   }
 
@@ -465,7 +516,8 @@ export function UltimatePlanner() {
         const upload = await sb.storage.from('planner-vault').upload(path, file, { upsert: false, contentType: item.type });
         if (!upload.error) {
           item.storagePath = path;
-          await sb.from('xp_vault_items').insert({ id: item.id, user_id: user.id, title: item.title, category: item.type, storage_path: path, notes: item.notes });
+          const saved = await sb.from('xp_vault_items').insert({ id: item.id, user_id: user.id, title: item.title, category: item.type, storage_path: path, notes: item.notes, metadata: { taskId, size: item.size } });
+          if (saved.error) alert(saved.error.message);
         } else alert(upload.error.message);
       }
     }
@@ -488,13 +540,19 @@ export function UltimatePlanner() {
     if (!file) return;
     const parsed = JSON.parse(await file.text()) as AppState;
     if (!Array.isArray(parsed.tasks) || !Array.isArray(parsed.records)) return alert('Invalid backup file.');
-    setState(parsed); alert('Backup imported.');
+    setState(parsed);
+    if (user) {
+      for (const task of parsed.tasks) await saveTaskToCloud(task);
+      for (const record of parsed.records) await saveRecordToCloud(record);
+    }
+    alert('Backup imported and synced.');
   }
 
   function installTemplate(name: string) {
     const root = blankTask('yearly'); root.title = name; root.notes = `Template installed: ${name}. Break this down with Qwen/Llama or instant templates.`; root.priority = 'high';
     const steps = instantBreakdown(root, 'monthly');
     mutate((current) => ({ ...current, tasks: [root, ...steps, ...current.tasks] }));
+    if (user) void (async () => { await saveTaskToCloud(root); for (const step of steps) await saveTaskToCloud(step); })();
     alert(`${name} template installed into planner.`);
   }
 
@@ -533,6 +591,7 @@ export function UltimatePlanner() {
   function assistantCreateRecord(module: ModuleName, title: string, body?: string) {
     const record = { ...blankRecord(module), title, body: body || '' };
     mutate((current) => ({ ...current, records: [record, ...current.records] }));
+    void saveRecordToCloud(record);
     alert(`Qwen added a ${moduleTitle(module)} entry.`);
   }
 
@@ -549,6 +608,7 @@ export function UltimatePlanner() {
     const clean = note.trim();
     if (!clean) return;
     setMemory((current) => (current.some((item) => item.toLowerCase() === clean.toLowerCase()) ? current : [clean, ...current].slice(0, 60)));
+    if (sb && user) void sb.from('xp_ai_memory').insert({ user_id: user.id, content: clean });
   }
 
   const shellClass = `xp-shell theme-${state.theme} density-${state.density} preset-${state.visualPreset}`;
@@ -649,7 +709,7 @@ function TaskDrawer({ task, parents, children, files, busy, aiProgress, onClose,
   return <aside className="drawer"><button className="x" onClick={onClose}>×</button><p className="eyebrow">TASK WORKSPACE</p><h2>{task.title}</h2><p>{task.notes}</p><div className="drawer-actions"><button onClick={() => onEdit(task)}>Edit</button><button onClick={onAttach}>Attach</button></div><div className="chips"><Pill>{levelLabel(task.level)}</Pill><Pill tone={task.priority}>{task.priority}</Pill><Pill>{task.status}</Pill><Pill>{taskDateTimeLabel(task)}</Pill>{task.notifyEnabled && <Pill>🔔 {reminderOptions.find((item) => item.minutes === task.reminderMinutes)?.label || `${task.reminderMinutes}m before`}</Pill>}</div><section><h3>Hierarchy</h3>{parents.map((item) => <div className="mini" key={item.id}>↑ {item.title}</div>)}{children.map((item) => <div className="mini" key={item.id}>↓ {item.title}</div>)}<div className="child-buttons">{plannerLevels.map((level) => <button key={level} onClick={() => onNewChild(level, task.id)}>+ {level}</button>)}</div></section><section><h3>AI breakdown</h3><button disabled={busy} onClick={() => onBreakdown('template')}>Instant smart templates</button><button disabled={busy} onClick={() => onBreakdown('local-ai')}>Run local Qwen/Llama</button>{aiProgress && <small>{aiProgress}</small>}</section><section><h3>Files</h3>{files.map((file) => <button className="mini" key={file.id} onClick={() => onOpenFile(file)}>▣ {file.name}</button>)}<button onClick={onAttach}>Attach more</button></section></aside>;
 }
 function TaskModal({ form, tasks, editing, setForm, onSubmit, onClose }: { form: PlannerTask; tasks: PlannerTask[]; editing: boolean; setForm: React.Dispatch<React.SetStateAction<PlannerTask>>; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onClose: () => void }) {
-  return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>{editing ? 'Edit task' : 'Create task'}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Notes"><textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={4} /></Field><div className="form-grid"><Field label="Level"><select value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value as PlannerLevel }))}>{plannerLevels.map((level) => <option key={level}>{level}</option>)}</select></Field><Field label="Parent"><select value={form.parentId || ''} onChange={(e) => setForm((f) => ({ ...f, parentId: e.target.value || null }))}><option value="">No parent</option>{tasks.filter((task) => task.id !== form.id).map((task) => <option value={task.id} key={task.id}>{task.level}: {task.title}</option>)}</select></Field><Field label="Start date"><input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} /></Field><Field label="Due date"><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></Field><Field label="Start time"><input type="time" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} /></Field><Field label="End time"><input type="time" value={form.endTime} onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))}>{['low','medium','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></Field><Field label="Status"><select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))}>{['planned','active','blocked','done'].map((s) => <option key={s}>{s}</option>)}</select></Field><Field label="Area"><input value={form.area} onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))} /></Field><Field label="Estimate minutes"><input type="number" value={form.estimateMinutes} onChange={(e) => setForm((f) => ({ ...f, estimateMinutes: Number(e.target.value) }))} /></Field><Field label="Task alert"><select value={form.notifyEnabled ? 'on' : 'off'} onChange={(e) => setForm((f) => ({ ...f, notifyEnabled: e.target.value === 'on' }))}><option value="off">No alert</option><option value="on">Push alert</option></select></Field>{form.notifyEnabled && <Field label="Alert timing"><select value={form.reminderMinutes} onChange={(e) => setForm((f) => ({ ...f, reminderMinutes: Number(e.target.value) }))}>{reminderOptions.map((option) => <option value={option.minutes} key={option.minutes}>{option.label}</option>)}</select></Field>}</div>{form.notifyEnabled && <p className="reminder-help">If no start time is set, Planned Out uses 9:00 AM on the due date for the reminder calculation.</p>}<Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save task</button></form></div>;
+  return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>{editing ? 'Edit task' : 'Create task'}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Notes"><textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} rows={4} /></Field><div className="form-grid"><Field label="Level"><select value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: e.target.value as PlannerLevel }))}>{plannerLevels.map((level) => <option key={level}>{level}</option>)}</select></Field><Field label="Parent"><select value={form.parentId || ''} onChange={(e) => setForm((f) => ({ ...f, parentId: e.target.value || null }))}><option value="">No parent</option>{tasks.filter((task) => task.id !== form.id).map((task) => <option value={task.id} key={task.id}>{task.level}: {task.title}</option>)}</select></Field><Field label="Start date"><input type="date" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} /></Field><Field label="Due date"><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></Field><Field label="Start time"><input type="time" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} /></Field><Field label="End time"><input type="time" value={form.endTime} onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))}>{['low','medium','high','urgent'].map((p) => <option key={p}>{p}</option>)}</select></Field><Field label="Repeat"><select value={form.recurrence || "none"} onChange={(e) => setForm((f) => ({ ...f, recurrence: e.target.value as PlannerTask["recurrence"] }))}>{["none","daily","weekly","monthly","yearly"].map((rule) => <option key={rule} value={rule}>{rule}</option>)}</select></Field><Field label="Status"><select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as Status }))}>{['planned','active','blocked','done'].map((s) => <option key={s}>{s}</option>)}</select></Field><Field label="Area"><input value={form.area} onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))} /></Field><Field label="Estimate minutes"><input type="number" value={form.estimateMinutes} onChange={(e) => setForm((f) => ({ ...f, estimateMinutes: Number(e.target.value) }))} /></Field><Field label="Task alert"><select value={form.notifyEnabled ? 'on' : 'off'} onChange={(e) => setForm((f) => ({ ...f, notifyEnabled: e.target.value === 'on' }))}><option value="off">No alert</option><option value="on">Push alert</option></select></Field>{form.notifyEnabled && <Field label="Alert timing"><select value={form.reminderMinutes} onChange={(e) => setForm((f) => ({ ...f, reminderMinutes: Number(e.target.value) }))}>{reminderOptions.map((option) => <option value={option.minutes} key={option.minutes}>{option.label}</option>)}</select></Field>}</div>{form.notifyEnabled && <p className="reminder-help">If no start time is set, Planned Out uses 9:00 AM on the due date for the reminder calculation.</p>}<Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save task</button></form></div>;
 }
 function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: ModuleName; form: ModuleRecord; setForm: React.Dispatch<React.SetStateAction<ModuleRecord>>; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onClose: () => void }) {
   const info = modules.find((item) => item.module === module)!;
