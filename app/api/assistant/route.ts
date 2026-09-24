@@ -1,142 +1,283 @@
-import {
-  convertToModelMessages,
-  createUIMessageStreamResponse,
-  streamText,
-  toUIMessageStream,
-  stepCountIs,
-  tool,
-  type UIMessage,
-} from 'ai';
-import { z } from 'zod';
-
 export const maxDuration = 30;
 
-// Qwen 3 flagship instruct model, served through the Vercel AI Gateway.
-const MODEL = 'alibaba/qwen3.5-flash';
+const FREE_MODELS = {
+  'gpt-oss-120b': {
+    id: '@cf/openai/gpt-oss-120b',
+    label: 'GPT-OSS 120B',
+  },
+  'nemotron-3-120b': {
+    id: '@cf/nvidia/nemotron-3-120b-a12b',
+    label: 'Nemotron 3 Super 120B',
+  },
+  'gemma-4-26b': {
+    id: '@cf/google/gemma-4-26b-a4b-it',
+    label: 'Gemma 4 26B',
+  },
+  'qwen-3.8-27b': {
+    id: '@cf/qwen/qwen3.8-27b',
+    label: 'Qwen 3.8 27B',
+  },
+} as const;
+
+type CloudflareModelKey = keyof typeof FREE_MODELS;
+type ModelChoice = 'auto' | CloudflareModelKey;
 
 type AssistantContext = {
   currentView?: string;
   theme?: string;
-  stats?: { tasks: number; done: number; overdue: number; records: number; files: number };
-  topTasks?: Array<{ title: string; level: string; status: string; priority: string; due: string; area: string }>;
+  stats?: {
+    tasks: number;
+    done: number;
+    overdue: number;
+    records: number;
+    files: number;
+  };
+  topTasks?: Array<{
+    title: string;
+    level: string;
+    status: string;
+    priority: string;
+    due: string;
+    area: string;
+  }>;
   recentRecords?: Array<{ module: string; title: string }>;
   memory?: string[];
 };
 
-const VIEWS = [
-  'dashboard', 'planner', 'calendar', 'board', 'focus', 'files', 'knowledge',
-  'habits', 'journal', 'finance', 'health', 'learning', 'travel', 'contacts',
-  'analytics', 'templates', 'settings',
-] as const;
+type ChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
 
-const MODULES = [
-  'knowledge', 'habit', 'journal', 'finance', 'health', 'learning', 'travel', 'contact',
-] as const;
-
-const THEMES = ['midnight', 'glass', 'aurora', 'executive', 'amoled', 'nature'] as const;
+// Planner/agent-first ordering. Every entry is a Cloudflare Workers AI model.
+const AUTO_ORDER: CloudflareModelKey[] = [
+  'nemotron-3-120b',
+  'gpt-oss-120b',
+  'gemma-4-26b',
+  'qwen-3.8-27b',
+];
 
 function buildSystemPrompt(ctx: AssistantContext): string {
   const stats = ctx.stats
     ? `Tasks: ${ctx.stats.tasks} (${ctx.stats.done} done, ${ctx.stats.overdue} overdue). Records: ${ctx.stats.records}. Files: ${ctx.stats.files}.`
-    : 'No stats available yet.';
+    : 'No planner statistics are available yet.';
+
   const tasks = ctx.topTasks?.length
-    ? ctx.topTasks.map((t) => `- [${t.status}/${t.priority}] ${t.title} (${t.level}, ${t.area}, due ${t.due})`).join('\n')
-    : 'No tasks yet.';
+    ? ctx.topTasks
+        .map(
+          (task) =>
+            `- [${task.status}/${task.priority}] ${task.title} (${task.level}, ${task.area}, due ${task.due})`,
+        )
+        .join('\n')
+    : 'No priority tasks are available.';
+
   const records = ctx.recentRecords?.length
-    ? ctx.recentRecords.map((r) => `- ${r.module}: ${r.title}`).join('\n')
-    : 'No records yet.';
+    ? ctx.recentRecords
+        .map((record) => `- ${record.module}: ${record.title}`)
+        .join('\n')
+    : 'No recent records are available.';
+
   const memory = ctx.memory?.length
-    ? ctx.memory.map((m) => `- ${m}`).join('\n')
-    : 'Nothing learned yet. Pay attention and remember useful preferences.';
+    ? ctx.memory.map((item) => `- ${item}`).join('\n')
+    : 'No stored preferences are available.';
 
   return [
-    'You are Qwen, the built-in assistant for "Xavier Planner OS Ultimate", a life operating system.',
-    'The app organizes life into a hierarchy: life > decade > yearly > quarterly > monthly > weekly > daily > hourly > task > subtask.',
-    'You help the user manage their planner, navigate the app, and you LEARN their ways over time.',
+    'You are Xavier AI, the built-in intelligence for Xavier Planner OS Ultimate.',
+    'The planner hierarchy is life > decade > yearly > quarterly > monthly > weekly > daily > hourly > task > subtask.',
+    'Help the user plan, organise, prioritise, reason about goals, and make practical decisions.',
+    'Be concise, specific, practical, and action-oriented.',
+    'Never claim you created, changed, deleted, saved, navigated, or completed something in the app unless the app actually performed that action.',
     '',
-    'Be concise, warm, and practical. Take action with tools instead of only describing what to do.',
-    'When the user asks to go somewhere, use navigate. When they describe something to plan, create the task or record for them.',
-    'Whenever you notice a durable preference, habit, working style, priority, or personal fact, call rememberAboutUser so you can serve them better next time. Do not remember trivial or one-off details.',
-    'After taking actions, briefly confirm what you did in plain language.',
-    '',
-    `Available views: ${VIEWS.join(', ')}.`,
-    `Available record modules: ${MODULES.join(', ')}.`,
-    `Available themes: ${THEMES.join(', ')}.`,
-    '',
-    '## Current context',
+    'CURRENT PLANNER CONTEXT',
     `Current view: ${ctx.currentView || 'dashboard'}. Theme: ${ctx.theme || 'midnight'}.`,
     stats,
     '',
-    '### Priority tasks',
+    'Priority tasks:',
     tasks,
     '',
-    '### Recent records',
+    'Recent records:',
     records,
     '',
-    '### What you have learned about this user',
+    'Remembered preferences:',
     memory,
   ].join('\n');
 }
 
-export async function POST(req: Request) {
-  const { messages, context }: { messages: UIMessage[]; context?: AssistantContext } = await req.json();
+function normalizeHistory(history: unknown): ChatMessage[] {
+  if (!Array.isArray(history)) return [];
 
-  const result = streamText({
-    model: MODEL,
-    system: buildSystemPrompt(context || {}),
-    messages: await convertToModelMessages(messages),
-    stopWhen: stepCountIs(6),
-    tools: {
-      navigate: tool({
-        description: 'Switch the app to a different view/screen.',
-        inputSchema: z.object({
-          view: z.enum(VIEWS).describe('The view to open.'),
-        }),
+  return history
+    .filter(
+      (item): item is { role: unknown; content: unknown } =>
+        Boolean(item && typeof item === 'object'),
+    )
+    .filter((item) => item.role === 'user' || item.role === 'assistant')
+    .slice(-10)
+    .map((item) => ({
+      role: item.role as 'user' | 'assistant',
+      content: String(item.content || '').slice(0, 8000),
+    }));
+}
+
+function normalizeModel(value: unknown): ModelChoice {
+  if (value === 'auto') return 'auto';
+
+  if (typeof value === 'string' && value in FREE_MODELS) {
+    return value as CloudflareModelKey;
+  }
+
+  return 'auto';
+}
+
+function extractText(payload: any): string {
+  const content = payload?.choices?.[0]?.message?.content;
+
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        return part?.text || part?.content || '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+
+  if (typeof payload?.result?.response === 'string') {
+    return payload.result.response.trim();
+  }
+
+  return '';
+}
+
+async function runCloudflare(
+  key: CloudflareModelKey,
+  system: string,
+  history: ChatMessage[],
+  prompt: string,
+): Promise<{ text: string; model: string }> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_API_TOKEN;
+
+  if (!accountId || !token) {
+    throw new Error(
+      'Cloudflare Workers AI is not configured. Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in Vercel.',
+    );
+  }
+
+  const selected = FREE_MODELS[key];
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: selected.id,
+        messages: [
+          { role: 'system', content: system },
+          ...history,
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.3,
+        options: { rejectIfBusy: true },
       }),
-      createTask: tool({
-        description: 'Create a new planner task/goal at any level of the hierarchy.',
-        inputSchema: z.object({
-          title: z.string().describe('Short, actionable title.'),
-          notes: z.string().optional().describe('Optional details or context.'),
-          level: z
-            .enum(['life', 'decade', 'yearly', 'quarterly', 'monthly', 'weekly', 'daily', 'hourly', 'task', 'subtask'])
-            .optional()
-            .describe('Hierarchy level. Defaults to daily.'),
-          priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
-          area: z.string().optional().describe('Life area, e.g. Business, Health, Home.'),
-          dueDate: z.string().optional().describe('Due date in YYYY-MM-DD format.'),
-        }),
-      }),
-      createRecord: tool({
-        description: 'Add an entry to one of the life modules (knowledge, habit, journal, finance, health, learning, travel, contact).',
-        inputSchema: z.object({
-          module: z.enum(MODULES),
-          title: z.string(),
-          body: z.string().optional(),
-        }),
-      }),
-      openTask: tool({
-        description: 'Find an existing task by a search phrase and open its workspace drawer.',
-        inputSchema: z.object({
-          query: z.string().describe('Words to match against task titles.'),
-        }),
-      }),
-      setTheme: tool({
-        description: 'Change the visual theme of the app.',
-        inputSchema: z.object({
-          theme: z.enum(THEMES),
-        }),
-      }),
-      rememberAboutUser: tool({
-        description: 'Save a durable preference, habit, working style, or fact about the user so future sessions are personalized.',
-        inputSchema: z.object({
-          note: z.string().describe('A single concise fact or preference, written in third person, e.g. "Prefers deep-work blocks in the morning".'),
-        }),
-      }),
+      cache: 'no-store',
     },
-  });
+  );
 
-  return createUIMessageStreamResponse({
-    stream: toUIMessageStream({ stream: result.stream }),
-  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message =
+      payload?.errors?.[0]?.message ||
+      payload?.error?.message ||
+      payload?.message ||
+      `Cloudflare returned HTTP ${response.status}.`;
+
+    throw new Error(String(message));
+  }
+
+  const text = extractText(payload);
+
+  if (!text) {
+    throw new Error(`${selected.label} returned an empty response.`);
+  }
+
+  return { text, model: selected.label };
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = (await req.json()) as {
+      prompt?: unknown;
+      context?: AssistantContext;
+      history?: unknown;
+      model?: unknown;
+    };
+
+    const prompt =
+      typeof body.prompt === 'string' ? body.prompt.trim() : '';
+
+    if (!prompt) {
+      return Response.json({ error: 'A message is required.' }, { status: 400 });
+    }
+
+    const requestedModel = normalizeModel(body.model);
+    const history = normalizeHistory(body.history);
+    const system = buildSystemPrompt(body.context || {});
+
+    const order: CloudflareModelKey[] =
+      requestedModel === 'auto'
+        ? AUTO_ORDER
+        : [
+            requestedModel,
+            ...AUTO_ORDER.filter((key) => key !== requestedModel),
+          ];
+
+    const failures: string[] = [];
+
+    for (const key of order) {
+      try {
+        const result = await runCloudflare(key, system, history, prompt);
+
+        return Response.json({
+          text: result.text,
+          model: result.model,
+          provider: 'Cloudflare Workers AI',
+          requestedModel,
+        });
+      } catch (error) {
+        failures.push(
+          `${FREE_MODELS[key].label}: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }`,
+        );
+      }
+    }
+
+    return Response.json(
+      {
+        error:
+          'All free AI models are currently unavailable. ' +
+          failures.join(' | '),
+      },
+      { status: 503 },
+    );
+  } catch (error) {
+    return Response.json(
+      {
+        error:
+          error instanceof Error ? error.message : 'The AI request failed.',
+      },
+      { status: 500 },
+    );
+  }
 }
