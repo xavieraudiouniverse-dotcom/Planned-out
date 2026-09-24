@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import { getSupabase } from '@/lib/supabase';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
 import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
+import { CollaborativeCalendar } from '@/components/collaborative-calendar';
 import { plannerLevels, type AppState, type AppView, type ModuleName, type ModuleRecord, type PlannerFile, type PlannerLevel, type PlannerTask, type Priority, type Status } from '@/lib/types';
 
 const STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
@@ -358,7 +359,7 @@ export function UltimatePlanner() {
       {notice && <div className="notice">{notice}</div>}
       {view === 'dashboard' && <Dashboard tasks={state.tasks} files={state.files} records={state.records} overdue={overdue} onOpenTask={setSelectedTaskId} onInstallTemplate={installTemplate} />}
       {view === 'planner' && <PlannerView tasks={filteredTasks} selectedTask={selectedTask} onSelect={setSelectedTaskId} onNew={openTask} onEdit={editTask} onToggle={toggleTask} onDelete={deleteTask} />}
-      {view === 'calendar' && <CalendarView tasks={filteredTasks} onSelect={setSelectedTaskId} />}
+      {view === 'calendar' && <CollaborativeCalendar user={user} tasks={filteredTasks} onSelectTask={setSelectedTaskId} onCreateTask={() => openTask('daily')} />}
       {view === 'board' && <BoardView tasks={filteredTasks} onSelect={setSelectedTaskId} onMove={toggleTask} />}
       {view === 'focus' && <FocusView tasks={filteredTasks} onSelect={setSelectedTaskId} onDone={(task) => void toggleTask(task, 'done')} />}
       {view === 'files' && <FilesView files={activeFiles} tasks={state.tasks} onAttach={() => fileInput.current?.click()} onOpen={(file) => void openFile(file)} />}
