@@ -121,12 +121,14 @@ export function CollaborativeCalendar({
   user,
   tasks,
   onSelectTask,
-  onCreateTask
+  onCreateTask,
+  onRequestSignIn
 }: {
   user: User | null;
   tasks: PlannerTask[];
   onSelectTask: (id: string) => void;
   onCreateTask: () => void;
+  onRequestSignIn: () => void;
 }) {
   const sb = useMemo(() => getSupabase(), []);
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -426,7 +428,7 @@ export function CollaborativeCalendar({
           })}
         </div>
 
-        {!user ? <div className="calendar-signin-card"><span>◉</span><h3>Sign in to share calendars</h3><p>Your private month still works. Sign in from the account panel to invite people and sync shared events.</p></div> : <div className="calendar-side-section">
+        {!user ? <div className="calendar-signin-card"><span>◉</span><h3>Sign in to share calendars</h3><p>Your private month still works. Sign in to create shared calendars, invite people and sync shared events.</p><button className="primary" onClick={onRequestSignIn}>Sign in / create account</button></div> : <div className="calendar-side-section">
           <p className="eyebrow">NEW SHARED CALENDAR</p>
           <div className="calendar-create-row"><input value={newCalendarName} onChange={(event) => setNewCalendarName(event.target.value)} placeholder="Calendar name" /><button disabled={busy || !newCalendarName.trim()} onClick={() => void createCalendar()}>Create</button></div>
         </div>}
