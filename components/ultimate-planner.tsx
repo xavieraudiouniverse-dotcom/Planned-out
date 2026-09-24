@@ -9,8 +9,11 @@ import { CollaborativeCalendar } from '@/components/collaborative-calendar';
 import { disablePushNotifications, enablePushNotifications, registerPushWorker } from '@/lib/push';
 import { plannerLevels, type AppState, type AppView, type ModuleName, type ModuleRecord, type PlannerFile, type PlannerLevel, type PlannerTask, type Priority, type Status, type VisualPreset } from '@/lib/types';
 
-const STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
-const MEMORY_KEY = 'xavier-planner-os-memory-v1';
+const LEGACY_STORAGE_KEY = 'xavier-planner-os-ultimate-v2';
+const STORAGE_PREFIX = 'planned-out-workspace-v3:';
+const MEMORY_PREFIX = 'planned-out-memory-v2:';
+const workspaceStorageKey = (scope: string) => `${STORAGE_PREFIX}${scope}`;
+const workspaceMemoryKey = (scope: string) => `${MEMORY_PREFIX}${scope}`;
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -98,20 +101,11 @@ function blankRecord(module: ModuleName): ModuleRecord {
   return { id: uid(), module, title: '', body: '', date: todayKey(), category: module, status: 'active', tags: [], data: {}, createdAt: now(), updatedAt: now() };
 }
 
-function seedState(): AppState {
-  const y = blankTask('yearly'); y.title = 'Build Xavier Planner OS Ultimate'; y.notes = 'A life operating system with files, AI, projects, habits, knowledge, finance, health, learning and analytics.'; y.priority = 'urgent'; y.area = 'Business'; y.tags = ['xavier', 'launch'];
-  const m = blankTask('monthly', y.id); m.title = 'Finish the production-ready planner foundation'; m.notes = 'Database, attachments, mobile UI, templates and AI planning support.'; m.priority = 'high'; m.area = 'Business';
-  const w = blankTask('weekly', m.id); w.title = 'Prepare Vercel deployment and test the core workflow'; w.status = 'active'; w.area = 'Business';
-  const d = blankTask('daily', w.id); d.title = 'Create first goals, attach files, run AI breakdown and export backup'; d.area = 'Business'; d.startTime = '09:00'; d.endTime = '10:30';
+function blankState(): AppState {
   return {
-    tasks: [y, m, w, d],
+    tasks: [],
     files: [],
-    records: [
-      { ...blankRecord('knowledge'), title: 'Planner principle', body: 'Everything connects: goals, tasks, files, people, notes, time, money and health.', tags: ['operating-system'] },
-      { ...blankRecord('habit'), title: 'Morning command review', body: 'Open dashboard, choose one priority, check deadlines, plan focus blocks.', data: { cadence: 'daily', target: 1, unit: 'review' } },
-      { ...blankRecord('finance'), title: 'Launch budget watch', body: 'Track software, domains, storage, AI costs and revenue.', amount: 0, data: { currency: 'AUD' } },
-      { ...blankRecord('journal'), title: 'Daily review', body: 'What moved forward today? What needs to change tomorrow?', data: { mood: 7, energy: 7 } }
-    ],
+    records: [],
     theme: 'midnight',
     visualPreset: 'neon-grid',
     density: 'comfortable',
@@ -119,15 +113,26 @@ function seedState(): AppState {
   };
 }
 
-function safeRead(): AppState {
-  if (typeof window === 'undefined') return seedState();
+
+function safeRead(scope: string): AppState {
+  if (typeof window === 'undefined') return blankState();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedState();
+    const raw = localStorage.getItem(workspaceStorageKey(scope));
+    if (!raw) return blankState();
     const parsed = JSON.parse(raw) as Partial<AppState>;
-    const seed = seedState();
-    return { tasks: parsed.tasks || seed.tasks, files: parsed.files || [], records: parsed.records || seed.records, theme: parsed.theme || 'midnight', visualPreset: parsed.visualPreset || 'neon-grid', density: parsed.density || 'comfortable', lastView: parsed.lastView || 'dashboard' };
-  } catch { return seedState(); }
+    const empty = blankState();
+    return {
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+      files: Array.isArray(parsed.files) ? parsed.files : [],
+      records: Array.isArray(parsed.records) ? parsed.records : [],
+      theme: parsed.theme || empty.theme,
+      visualPreset: parsed.visualPreset || empty.visualPreset,
+      density: parsed.density || empty.density,
+      lastView: parsed.lastView || empty.lastView
+    };
+  } catch {
+    return blankState();
+  }
 }
 
 function percentDone(tasks: PlannerTask[]) { return tasks.length ? Math.round((tasks.filter((t) => t.status === 'done').length / tasks.length) * 100) : 0; }
@@ -155,7 +160,7 @@ function Pill({ children, tone = '' }: { children: React.ReactNode; tone?: strin
 
 export function UltimatePlanner() {
   const sb = useMemo(() => getSupabase(), []);
-  const [state, setState] = useState<AppState>(() => seedState());
+  const [state, setState] = useState<AppState>(() => blankState());
   const [view, setView] = useState<AppView>('dashboard');
   const [query, setQuery] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -177,19 +182,51 @@ export function UltimatePlanner() {
   const fileInput = useRef<HTMLInputElement | null>(null);
   const backupInput = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => { const loaded = safeRead(); setState(loaded); setView(loaded.lastView); }, []);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try { const raw = localStorage.getItem(MEMORY_KEY); if (raw) setMemory(JSON.parse(raw) as string[]); } catch { /* ignore */ }
-  }, []);
-  useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem(MEMORY_KEY, JSON.stringify(memory)); }, [memory]);
-  useEffect(() => { if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, lastView: view })); }, [state, view]);
-  useEffect(() => {
-    if (!sb) return;
-    void sb.auth.getUser().then(({ data }) => { setUser(data.user); if (data.user) void loadCloud(data.user.id); });
-    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => { setUser(session?.user || null); if (session?.user) void loadCloud(session.user.id); });
+    if (!sb) {
+      const guest = safeRead('guest');
+      setState(guest);
+      setView(guest.lastView);
+      return;
+    }
+
+    const activateWorkspace = async (nextUser: User | null) => {
+      const scope = nextUser?.id || 'guest';
+      const local = safeRead(scope);
+      setUser(nextUser);
+      setState(local);
+      setView(local.lastView);
+
+      if (typeof window !== 'undefined') {
+        try {
+          const rawMemory = localStorage.getItem(workspaceMemoryKey(scope));
+          setMemory(rawMemory ? JSON.parse(rawMemory) as string[] : []);
+        } catch {
+          setMemory([]);
+        }
+      }
+
+      if (nextUser) await loadCloud(nextUser.id, local);
+    };
+
+    void sb.auth.getUser().then(({ data }) => void activateWorkspace(data.user || null));
+    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
+      void activateWorkspace(session?.user || null);
+    });
     return () => sub.subscription.unsubscribe();
   }, [sb]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const scope = user?.id || 'guest';
+    localStorage.setItem(workspaceMemoryKey(scope), JSON.stringify(memory));
+  }, [memory, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const scope = user?.id || 'guest';
+    localStorage.setItem(workspaceStorageKey(scope), JSON.stringify({ ...state, lastView: view }));
+  }, [state, view, user]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -211,7 +248,7 @@ export function UltimatePlanner() {
   function mutate(updater: (current: AppState) => AppState) { setState((current) => updater(current)); }
   function alert(message: string) { setNotice(message); window.setTimeout(() => setNotice(''), 6000); }
 
-  async function loadCloud(userId: string) {
+  async function loadCloud(userId: string, localState: AppState = safeRead(userId)) {
     if (!sb) return;
     const [tasks, attachments, trackers, notes] = await Promise.all([
       sb.from('planner_tasks').select('*').eq('user_id', userId).limit(5000),
@@ -227,8 +264,14 @@ export function UltimatePlanner() {
     const cloudFiles: PlannerFile[] = (attachments.data || []).map((row) => ({ id: String(row.id), taskId: row.task_id, title: row.name, name: row.name, type: row.mime_type, size: row.file_size, storagePath: row.storage_path, notes: '', createdAt: row.created_at || now() }));
     const trackerRecords: ModuleRecord[] = (trackers.data || []).map((row) => ({ id: String(row.id), module: row.module as ModuleName, title: row.title, body: row.notes || '', date: row.target_date || todayKey(), category: row.module, status: row.status || 'active', tags: [], data: row.data || {}, createdAt: row.created_at || now(), updatedAt: row.updated_at || now() }));
     const noteRecords: ModuleRecord[] = (notes.data || []).map((row) => ({ id: String(row.id), module: 'knowledge', title: row.title, body: row.body || '', date: (row.created_at || now()).slice(0, 10), category: row.kind || 'note', status: 'active', tags: row.tags || [], data: row.metadata || {}, createdAt: row.created_at || now(), updatedAt: row.updated_at || now() }));
-    mutate((current) => ({ ...current, tasks: cloudTasks.length ? cloudTasks : current.tasks, files: cloudFiles.length ? cloudFiles : current.files, records: unique([...trackerRecords, ...noteRecords, ...current.records].map((r) => r.id)).map((id) => [...trackerRecords, ...noteRecords, ...current.records].find((r) => r.id === id)!) }));
-    alert('Loaded your Supabase workspace.');
+    const cloudRecords = [...trackerRecords, ...noteRecords];
+    setState({
+      ...localState,
+      tasks: cloudTasks.length ? cloudTasks : localState.tasks,
+      files: cloudFiles.length ? cloudFiles : localState.files,
+      records: cloudRecords.length ? cloudRecords : localState.records
+    });
+    alert('Loaded your private Supabase workspace.');
   }
 
   async function saveTaskToCloud(task: PlannerTask) {
@@ -246,7 +289,11 @@ export function UltimatePlanner() {
   }
 
   async function enablePush() {
-    if (!user) return alert('Sign in first so background reminders can sync to this device.');
+    if (!user) {
+      setShowAuth(true);
+      alert('Sign in first. After the email sign-in link returns you to Planned Out, tap Enable push alerts again.');
+      return;
+    }
     setBusy(true);
     try {
       const permission = await enablePushNotifications(user);
@@ -270,6 +317,32 @@ export function UltimatePlanner() {
       alert(error instanceof Error ? error.message : 'Could not disable push alerts.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function testPush() {
+    if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
+      alert('This browser does not support web notifications.');
+      return;
+    }
+    if (Notification.permission !== 'granted') {
+      if (!user) setShowAuth(true);
+      alert('Enable push alerts on this device first.');
+      return;
+    }
+    try {
+      const registration = await registerPushWorker();
+      if (!registration) return alert('Could not register the notification worker.');
+      await registration.showNotification('Planned Out', {
+        body: 'Push alerts are working on this device.',
+        icon: '/planned-out-icon-192.png',
+        badge: '/planned-out-icon-192.png',
+        tag: 'planned-out-test',
+        data: { url: '/' }
+      });
+      alert('Test notification sent.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not send the test notification.');
     }
   }
 
@@ -327,7 +400,14 @@ export function UltimatePlanner() {
     setBusy(false);
     if (error) alert(error.message); else alert('Check your email for the sign-in link.');
   }
-  async function signOut() { if (sb) await sb.auth.signOut(); setUser(null); }
+  async function signOut() {
+    if (sb) await sb.auth.signOut();
+    setUser(null);
+    const guest = safeRead('guest');
+    setState(guest);
+    setView(guest.lastView);
+    setMemory([]);
+  }
 
   async function attachFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -441,14 +521,14 @@ export function UltimatePlanner() {
       {notice && <div className="notice">{notice}</div>}
       {view === 'dashboard' && <Dashboard tasks={state.tasks} files={state.files} records={state.records} overdue={overdue} onOpenTask={setSelectedTaskId} onInstallTemplate={installTemplate} />}
       {view === 'planner' && <PlannerView tasks={filteredTasks} selectedTask={selectedTask} onSelect={setSelectedTaskId} onNew={openTask} onEdit={editTask} onToggle={toggleTask} onDelete={deleteTask} />}
-      {view === 'calendar' && <CollaborativeCalendar user={user} tasks={filteredTasks} onSelectTask={setSelectedTaskId} onCreateTask={() => openTask('daily')} />}
+      {view === 'calendar' && <CollaborativeCalendar user={user} tasks={filteredTasks} onSelectTask={setSelectedTaskId} onCreateTask={() => openTask('daily')} onRequestSignIn={() => setShowAuth(true)} />}
       {view === 'board' && <BoardView tasks={filteredTasks} onSelect={setSelectedTaskId} onMove={toggleTask} />}
       {view === 'focus' && <FocusView tasks={filteredTasks} onSelect={setSelectedTaskId} onDone={(task) => void toggleTask(task, 'done')} />}
       {view === 'files' && <FilesView files={activeFiles} tasks={state.tasks} onAttach={() => fileInput.current?.click()} onOpen={(file) => void openFile(file)} />}
       {moduleMap[view] && <ModuleView module={moduleMap[view]!} records={visibleRecords} onNew={openRecord} />}
       {view === 'analytics' && <AnalyticsView tasks={state.tasks} records={state.records} files={state.files} />}
       {view === 'templates' && <TemplatesView onInstall={installTemplate} />}
-      {view === 'settings' && <SettingsView state={state} setState={setState} user={user} busy={busy} pushPermission={pushPermission} onEnablePush={() => void enablePush()} onDisablePush={() => void disablePush()} onExport={exportBackup} onImport={() => backupInput.current?.click()} />}
+      {view === 'settings' && <SettingsView state={state} setState={setState} user={user} busy={busy} pushPermission={pushPermission} onEnablePush={() => void enablePush()} onTestPush={() => void testPush()} onDisablePush={() => void disablePush()} onExport={exportBackup} onImport={() => backupInput.current?.click()} />}
     </main>
     <input ref={fileInput} className="hidden" type="file" multiple onChange={(event) => void attachFiles(event.target.files)} />
     <input ref={backupInput} className="hidden" type="file" accept="application/json,.json" onChange={(event) => void importBackup(event.target.files?.[0])} />
@@ -511,10 +591,10 @@ function AnalyticsView({ tasks, records, files }: { tasks: PlannerTask[]; record
   return <section className="page"><div className="stats"><Stat label="Completion" value={`${percentDone(tasks)}%`} note="Overall task progress" /><Stat label="Records" value={records.length} note="Across life modules" /><Stat label="Files" value={files.length} note="Vault items" /><Stat label="High priority" value={tasks.filter((task) => task.priority === 'urgent' || task.priority === 'high').length} note="Critical workload" /></div><div className="grid two"><Panel title="Task levels">{byLevel.map((item) => <div className="bar" key={item.level}><span>{levelLabel(item.level)}</span><i style={{ width: `${Math.min(100, item.count * 12)}%` }} /><b>{item.count}</b></div>)}</Panel><Panel title="Life modules">{byModule.map((item) => <div className="bar" key={item.name}><span>{item.name}</span><i style={{ width: `${Math.min(100, item.count * 20)}%` }} /><b>{item.count}</b></div>)}</Panel></div></section>;
 }
 function TemplatesView({ onInstall }: { onInstall: (name: string) => void }) { return <section className="page"><div className="template-grid">{templates.map((template) => <article className="template" key={template.name}><Pill>{template.category}</Pill><h3>{template.name}</h3><p>{template.details}</p><button onClick={() => onInstall(template.name)}>Install template</button></article>)}</div></section>; }
-function SettingsView({ state, setState, user, busy, pushPermission, onEnablePush, onDisablePush, onExport, onImport }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; user: User | null; busy: boolean; pushPermission: string; onEnablePush: () => void; onDisablePush: () => void; onExport: () => void; onImport: () => void }) {
+function SettingsView({ state, setState, user, busy, pushPermission, onEnablePush, onTestPush, onDisablePush, onExport, onImport }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>>; user: User | null; busy: boolean; pushPermission: string; onEnablePush: () => void; onTestPush: () => void; onDisablePush: () => void; onExport: () => void; onImport: () => void }) {
   return <section className="page"><div className="settings-grid">
     <Panel title="Technology layouts"><div className="preset-grid">{visualPresetOptions.map((preset, index) => <button className={`preset-option ${state.visualPreset === preset.id ? 'chosen' : ''}`} key={preset.id} onClick={() => setState((s) => ({ ...s, visualPreset: preset.id }))}><span className="preset-number">{String(index + 1).padStart(2, '0')}</span><b>{preset.name}</b><small>{preset.description}</small></button>)}</div></Panel>
-    <Panel title="Push alerts"><p className="reminder-help">Background reminders use your signed-in Supabase account and this device's browser push subscription. Task alerts are delivered from the Planned Out reminder service every minute.</p><span className={`push-status ${pushPermission}`}><i />{!user ? 'Sign in to enable background alerts' : `Browser permission: ${pushPermission}`}</span><div className="push-actions"><button className={pushPermission === 'granted' ? 'chosen' : ''} disabled={busy || !user} onClick={onEnablePush}>Enable on this device</button><button disabled={busy || !user} onClick={onDisablePush}>Remove device alerts</button></div></Panel>
+    <Panel title="Push alerts"><p className="reminder-help">Background reminders use your signed-in Supabase account and this device's browser push subscription. If you are signed out, the first button opens sign-in instead of doing nothing.</p><span className={`push-status ${pushPermission}`}><i />{!user ? 'Account required for scheduled background alerts' : `Browser permission: ${pushPermission}`}</span><div className="push-actions"><button className={pushPermission === 'granted' ? 'chosen' : ''} disabled={busy} onClick={onEnablePush}>{user ? (pushPermission === 'granted' ? 'Re-enable push alerts' : 'Enable push alerts') : 'Sign in & enable push'}</button><button disabled={busy || pushPermission !== 'granted'} onClick={onTestPush}>Send test alert</button><button disabled={busy || !user} onClick={onDisablePush}>Remove device alerts</button></div></Panel>
     <Panel title="Themes"><div className="choices">{['midnight','glass','aurora','executive','amoled','nature'].map((theme) => <button className={state.theme === theme ? 'chosen' : ''} key={theme} onClick={() => setState((s) => ({ ...s, theme }))}>{theme}</button>)}</div></Panel>
     <Panel title="Density"><div className="choices"><button className={state.density === 'comfortable' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'comfortable' }))}>Comfortable</button><button className={state.density === 'compact' ? 'chosen' : ''} onClick={() => setState((s) => ({ ...s, density: 'compact' }))}>Compact</button></div></Panel>
     <Panel title="Backup"><button onClick={onExport}>Export JSON backup</button><button onClick={onImport}>Import backup</button></Panel>
@@ -532,5 +612,5 @@ function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: Mod
   return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>Add {info.title}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Details"><textarea rows={5} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></Field><div className="form-grid"><Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} /></Field><Field label="Category"><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></Field><Field label="Status"><input value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} /></Field><Field label="Amount"><input type="number" value={form.amount || ''} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save entry</button></form></div>;
 }
 function AuthModal({ user, email, setEmail, busy, onSubmit, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; busy: boolean; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
-  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Supabase account</h2>{user ? <><p>Signed in as {user.email}. Your core planner and private vault can sync to Supabase.</p><button onClick={onSignOut}>Sign out</button></> : <form onSubmit={onSubmit}><p>Email magic link login. No password needed.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send sign-in link'}</button></form>}</div></div>;
+  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and private calendar stay isolated to this account. Other people only see a shared calendar after you explicitly invite them.</p><button onClick={onSignOut}>Sign out</button></> : <form onSubmit={onSubmit}><p>Email magic link login. Every account gets its own private workspace. Shared calendar access is invitation-only.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send sign-in link'}</button></form>}</div></div>;
 }
