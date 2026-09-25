@@ -298,6 +298,16 @@ export function AssistantPanel({ actions }: { actions: AssistantActions }) {
               </select>
 
               <small title={selected.detail}>{selected.detail}</small>
+
+              <a
+                className="assistant-chatgpt-link"
+                href="https://chatgpt.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open ChatGPT (free account) ↗
+              </a>
+              <small>Use your own ChatGPT account. Replies stay in ChatGPT.</small>
             </div>
 
             <button

@@ -14,7 +14,7 @@ export const MODEL_OPTIONS = [
   {
     id: 'gpt-oss-120b',
     label: 'GPT-OSS 120B',
-    detail: 'Strong general reasoning and complex problem solving.',
+    detail: 'Open-weight cloud model; separate from ChatGPT accounts.',
   },
   {
     id: 'gemma-4-26b',
