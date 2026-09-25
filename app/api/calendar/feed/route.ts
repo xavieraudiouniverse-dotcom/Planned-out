@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import ical from 'node-ical';
 
-const ALLOWED_HOSTS = new Set(['calendar.google.com', 'www.google.com', 'outlook.live.com', 'outlook.office365.com', 'outlook.office.com', 'outlook.com']);
+const ALLOWED_HOSTS = new Set(['calendar.google.com', 'www.google.com', 'outlook.live.com', 'outlook.office365.com', 'outlook.office.com', 'outlook.com', 'caldav.icloud.com']);
+
+function isAllowedCalendarHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return ALLOWED_HOSTS.has(host) || /^p\d+-caldav\.icloud\.com$/.test(host);
+}
 
 export async function GET(request: Request) {
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
@@ -21,7 +26,7 @@ export async function GET(request: Request) {
   let external: URL;
   try { external = new URL(feed.url.replace(/^webcal:\/\//i, 'https://')); }
   catch { return Response.json({ error: 'Invalid calendar address.' }, { status: 400 }); }
-  if (external.protocol !== 'https:' || !ALLOWED_HOSTS.has(external.hostname) || external.port || external.username || external.password) return Response.json({ error: 'Use a Google or Outlook iCal address.' }, { status: 400 });
+  if (external.protocol !== 'https:' || !isAllowedCalendarHost(external.hostname) || external.port || external.username || external.password) return Response.json({ error: 'Use a Google, Outlook/Microsoft, or Apple/iCloud iCal address.' }, { status: 400 });
   try {
     const response = await fetch(external, { signal: AbortSignal.timeout(8000), redirect: 'manual', cache: 'no-store' });
     if (!response.ok || Number(response.headers.get('content-length') || 0) > 2_000_000) throw new Error('Calendar feed unavailable or too large.');

@@ -531,7 +531,7 @@ export function CollaborativeCalendar({
           <div className="calendar-create-row"><input value={newCalendarName} onChange={(event) => setNewCalendarName(event.target.value)} placeholder="Calendar name" /><button disabled={busy || !newCalendarName.trim()} onClick={() => void createCalendar()}>Create</button></div>
         </div>}
 
-        {user && <div className="calendar-side-section"><p className="eyebrow">GOOGLE / OUTLOOK</p><p>Connect a read-only iCal link from your calendar settings. Keep its private address secret.</p><form onSubmit={addFeed}><label className="field"><span>Calendar name</span><input value={feedName} onChange={(event) => setFeedName(event.target.value)} /></label><label className="field"><span>Private iCal link</span><input type="text" value={feedUrl} onChange={(event) => setFeedUrl(event.target.value)} placeholder="https://calendar.google.com/…" required /></label><button className="primary">Connect calendar</button></form></div>}
+        
 
         {activeCalendar && <div className="calendar-side-section calendar-summary-card">
           <span className="calendar-big-dot" style={{ background: activeCalendar.color }} />
