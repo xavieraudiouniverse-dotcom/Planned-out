@@ -175,6 +175,7 @@ export function UltimatePlanner() {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmationCode, setConfirmationCode] = useState('');
   const [awaitingEmailConfirmation, setAwaitingEmailConfirmation] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -189,27 +190,10 @@ export function UltimatePlanner() {
   const authRequestInFlight = useRef(false);
 
   useEffect(() => {
-    setEmail(localStorage.getItem(PENDING_EMAIL_KEY) || '');
+    const pendingEmail = localStorage.getItem(PENDING_EMAIL_KEY) || '';
+    setEmail(pendingEmail);
+    setAwaitingEmailConfirmation(Boolean(pendingEmail));
   }, []);
-
-  useEffect(() => {
-    if (!sb || !awaitingEmailConfirmation || typeof window === 'undefined') return;
-
-    const retryInOriginalWindow = () => {
-      if (document.visibilityState === 'visible') void finishEmailConfirmation(true);
-    };
-
-    const onFocus = () => void finishEmailConfirmation(true);
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', retryInOriginalWindow);
-    const timer = window.setInterval(retryInOriginalWindow, 30000);
-
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', retryInOriginalWindow);
-      window.clearInterval(timer);
-    };
-  }, [sb, awaitingEmailConfirmation, email, password]);
 
   useEffect(() => {
     if (!sb) {
@@ -496,36 +480,44 @@ export function UltimatePlanner() {
     }
   }
 
-  async function finishEmailConfirmation(silent = false): Promise<boolean> {
+  async function finishEmailConfirmation(): Promise<boolean> {
     if (!sb || !awaitingEmailConfirmation) return false;
     const address = email.trim();
-    if (!address || password.length < 8 || authRequestInFlight.current) return false;
+    if (!address) return false;
+    if (authRequestInFlight.current) return false;
 
     authRequestInFlight.current = true;
-    if (!silent) setBusy(true);
+    setBusy(true);
     try {
-      const { error } = await sb.auth.signInWithPassword({ email: address, password });
-      if (error) {
-        const message = error.message.toLowerCase();
-        if (!silent) {
-          if (message.includes('email not confirmed')) {
-            alert('Your email has not been confirmed yet. Open the confirmation email, then return to this Planned Out window.');
-          } else {
-            alert(error.message);
-          }
-        }
-        return false;
+      const token = confirmationCode.replace(/\s+/g, '');
+      if (token) {
+        const { data, error } = await sb.auth.verifyOtp({ email: address, token, type: 'email' });
+        if (error) throw error;
+        if (!data.session) throw new Error('The confirmation code was accepted, but no session was returned. Try signing in with your password.');
+      } else {
+        if (password.length < 8) return false;
+        const { error } = await sb.auth.signInWithPassword({ email: address, password });
+        if (error) throw error;
       }
 
       localStorage.removeItem(PENDING_EMAIL_KEY);
       setAwaitingEmailConfirmation(false);
+      setConfirmationCode('');
       setPassword('');
       setShowAuth(false);
-      alert('Email confirmed. Signed in on this original Planned Out window.');
+      alert('Email confirmed. Signed in on this device.');
       return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not finish sign-in.';
+      if (/expired|invalid.*otp|token/i.test(message)) {
+        alert('That confirmation code/link is expired or already used. Create the account only once, then use the newest confirmation email.');
+      } else {
+        alert(message);
+      }
+      return false;
     } finally {
       authRequestInFlight.current = false;
-      if (!silent) setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -548,33 +540,29 @@ export function UltimatePlanner() {
       if (data.session) {
         localStorage.removeItem(PENDING_EMAIL_KEY);
         setAwaitingEmailConfirmation(false);
+        setConfirmationCode('');
         setPassword('');
         setShowAuth(false);
         alert('Account created and signed in on this device.');
         return;
       }
 
-      const immediate = await sb.auth.signInWithPassword({ email: address, password });
-      if (!immediate.error) {
-        localStorage.removeItem(PENDING_EMAIL_KEY);
-        setAwaitingEmailConfirmation(false);
-        setPassword('');
-        setShowAuth(false);
-        alert('Account ready. Signed in on this device.');
-        return;
-      }
-
-      const signInMessage = immediate.error.message.toLowerCase();
       const duplicateIdentity = Boolean(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0);
-      if (duplicateIdentity && !signInMessage.includes('email not confirmed')) {
-        throw new Error('An account already exists for this email. Use its password to sign in.');
+      if (duplicateIdentity) {
+        throw new Error('An account already exists for this email. Use Sign in instead of creating it again.');
       }
 
       localStorage.setItem(PENDING_EMAIL_KEY, address);
       setAwaitingEmailConfirmation(true);
-      alert('Confirmation email sent. Open the confirmation link in any browser. Then return to this original Planned Out window — it will finish signing in here automatically.');
+      setConfirmationCode('');
+      alert('Account created. Use the newest confirmation email once. If it shows a code, enter it here; otherwise open the confirmation link once, return here, and press Finish sign-in.');
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Could not create the account.');
+      const message = error instanceof Error ? error.message : 'Could not create the account.';
+      if (/rate limit|too many requests/i.test(message)) {
+        alert('Supabase email rate limit reached. Do not keep pressing Create account. For the beta, turn off Confirm email in Supabase so signup signs in directly.');
+      } else {
+        alert(message);
+      }
     } finally {
       authRequestInFlight.current = false;
       setBusy(false);
@@ -744,7 +732,7 @@ export function UltimatePlanner() {
     {selectedTask && <TaskDrawer task={selectedTask} parents={lineage(state.tasks, selectedTask)} children={childrenOf(state.tasks, selectedTask.id)} files={state.files.filter((file) => file.taskId === selectedTask.id)} busy={busy} aiProgress={aiProgress} onClose={() => setSelectedTaskId(null)} onEdit={editTask} onNewChild={openTask} onBreakdown={(engine) => void breakdownTask(selectedTask, engine)} onAttach={() => fileInput.current?.click()} onOpenFile={(file) => void openFile(file)} />}
     {taskModal && <TaskModal form={taskForm} tasks={state.tasks} editing={Boolean(editingTask)} setForm={setTaskForm} onSubmit={submitTask} onClose={() => setTaskModal(false)} />}
     {recordModal && <RecordModal module={recordModal} form={recordForm} setForm={setRecordForm} onSubmit={submitRecord} onClose={() => setRecordModal(null)} />}
-    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} password={password} setPassword={setPassword} awaitingEmailConfirmation={awaitingEmailConfirmation} busy={busy} onSignIn={signInWithPassword} onCreateAccount={() => void createPasswordAccount()} onFinishConfirmation={() => void finishEmailConfirmation(false)} onSetPassword={setAccountPassword} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
+    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} password={password} setPassword={setPassword} confirmationCode={confirmationCode} setConfirmationCode={setConfirmationCode} awaitingEmailConfirmation={awaitingEmailConfirmation} busy={busy} onSignIn={signInWithPassword} onCreateAccount={() => void createPasswordAccount()} onFinishConfirmation={() => void finishEmailConfirmation()} onSetPassword={setAccountPassword} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
     <AssistantPanel actions={{
       getContext: assistantContext,
       navigate: setView,
@@ -821,6 +809,6 @@ function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: Mod
   const info = modules.find((item) => item.module === module)!;
   return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>Add {info.title}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Details"><textarea rows={5} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></Field><div className="form-grid"><Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} /></Field><Field label="Category"><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></Field><Field label="Status"><input value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} /></Field><Field label="Amount"><input type="number" value={form.amount || ''} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save entry</button></form></div>;
 }
-function AuthModal({ user, email, setEmail, password, setPassword, awaitingEmailConfirmation, busy, onSignIn, onCreateAccount, onFinishConfirmation, onSetPassword, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; awaitingEmailConfirmation: boolean; busy: boolean; onSignIn: (event: React.FormEvent<HTMLFormElement>) => void; onCreateAccount: () => void; onFinishConfirmation: () => void; onSetPassword: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
-  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and calendar data stay isolated to this account.</p><form onSubmit={onSetPassword}><p><strong>Set or change your password</strong></p><p>Use this password to sign in directly inside Planned Out on any device.</p><Field label="New password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button></form><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSignIn}><p><strong>Email + password</strong></p><p>The session is created in the Planned Out window you are actually using.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></Field><Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={awaitingEmailConfirmation ? "new-password" : "current-password"} minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button><button type="button" disabled={busy || !email.trim() || password.length < 8} onClick={onCreateAccount}>{busy ? 'Working…' : 'Create account'}</button><p className="muted">Create account saves the password first. If Supabase opens the confirmation link in another browser, that is okay: confirm the email there, then return here. Planned Out will sign this original window in automatically.</p></form>{awaitingEmailConfirmation && <><hr /><div><p><strong>Waiting for email confirmation</strong></p><p>You can open the confirmation link in any browser. When you come back to this Planned Out window, it retries the password sign-in here automatically.</p><button className="primary" type="button" disabled={busy} onClick={onFinishConfirmation}>{busy ? 'Checking…' : 'I confirmed it — finish sign-in here'}</button></div></>}</>}</div></div>;
+function AuthModal({ user, email, setEmail, password, setPassword, confirmationCode, setConfirmationCode, awaitingEmailConfirmation, busy, onSignIn, onCreateAccount, onFinishConfirmation, onSetPassword, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; confirmationCode: string; setConfirmationCode: (value: string) => void; awaitingEmailConfirmation: boolean; busy: boolean; onSignIn: (event: React.FormEvent<HTMLFormElement>) => void; onCreateAccount: () => void; onFinishConfirmation: () => void; onSetPassword: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
+  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and calendar data stay isolated to this account.</p><form onSubmit={onSetPassword}><p><strong>Set or change your password</strong></p><p>Use this password to sign in directly inside Planned Out on any device.</p><Field label="New password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button></form><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSignIn}><p><strong>Email + password</strong></p><p>The session is created in the Planned Out window you are actually using.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></Field><Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={awaitingEmailConfirmation ? "new-password" : "current-password"} minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button><button type="button" disabled={busy || !email.trim() || password.length < 8} onClick={onCreateAccount}>{busy ? 'Working…' : 'Create account'}</button><p className="muted">Create account saves the password first. If Supabase opens the confirmation link in another browser, that is okay: confirm the email there, then return here. Planned Out will sign this original window in automatically.</p></form>{awaitingEmailConfirmation && <><hr /><div><p><strong>Finish account confirmation</strong></p><p>If the newest Supabase email shows a confirmation code, enter it below and finish here without changing browsers. If it only has a link, open that link once, return here, leave the code blank, enter your password above, then press Finish sign-in.</p><Field label="Confirmation code (optional)"><input inputMode="numeric" autoComplete="one-time-code" value={confirmationCode} onChange={(e) => setConfirmationCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 8))} placeholder="Confirmation code" /></Field><button className="primary" type="button" disabled={busy || (!confirmationCode && password.length < 8)} onClick={onFinishConfirmation}>{busy ? 'Checking…' : 'Finish sign-in'}</button></div></>}</>}</div></div>;
 }
