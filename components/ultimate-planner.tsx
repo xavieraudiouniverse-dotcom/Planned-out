@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { getSupabase, getSupabaseHost } from '@/lib/supabase';
+import { getSupabase } from '@/lib/supabase';
 import { nextOccurrence } from '@/lib/recurrence';
 import { instantBreakdown, qwenOrLlamaBreakdown } from '@/lib/ai';
 import { AssistantPanel, type AssistantContext } from '@/components/assistant-panel';
@@ -174,6 +174,7 @@ export function UltimatePlanner() {
   const [recordForm, setRecordForm] = useState<ModuleRecord>(() => blankRecord('knowledge'));
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [verification, setVerification] = useState('');
   const [showAuth, setShowAuth] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -341,7 +342,7 @@ export function UltimatePlanner() {
   async function enablePush() {
     if (!user) {
       setShowAuth(true);
-      alert('Sign in first. After the email sign-in link returns you to Planned Out, tap Enable push alerts again.');
+      alert('Sign in first, then tap Enable push alerts again.');
       return;
     }
     setBusy(true);
@@ -451,47 +452,98 @@ export function UltimatePlanner() {
     setRecordModal(null); alert(`${moduleTitle(record.module)} entry added.`);
   }
 
-  async function signIn(event: React.FormEvent<HTMLFormElement>) {
+  async function signInWithPassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!sb) return alert('Missing Supabase environment variables.');
-    setBusy(true);
     const address = email.trim();
-    const { error } = await sb.auth.signInWithOtp({ email: address, options: { emailRedirectTo: window.location.origin } });
-    setBusy(false);
-    if (error) alert(error.message);
-    else {
-      localStorage.setItem(PENDING_EMAIL_KEY, address);
-      alert('Check your email. Enter its code here, or copy the verification link and paste it here before opening it.');
+    if (!address || !password) return alert('Enter your email and password.');
+    setBusy(true);
+    try {
+      const { error } = await sb.auth.signInWithPassword({ email: address, password });
+      if (error) throw error;
+      localStorage.removeItem(PENDING_EMAIL_KEY);
+      setPassword('');
+      setVerification('');
+      setShowAuth(false);
+      alert('Signed in on this device. No email-link redirect needed.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not sign in.';
+      alert(`${message} If this account previously used email links only, sign in once on a device where you are already authenticated and set a password from Account.`);
+    } finally {
+      setBusy(false);
     }
   }
+
+  async function createPasswordAccount() {
+    if (!sb) return alert('Missing Supabase environment variables.');
+    const address = email.trim();
+    if (!address || password.length < 8) return alert('Use an email and a password with at least 8 characters.');
+    setBusy(true);
+    try {
+      const { data, error } = await sb.auth.signUp({ email: address, password });
+      if (error) throw error;
+      if (data.session) {
+        setPassword('');
+        setShowAuth(false);
+        alert('Account created and signed in on this device.');
+      } else {
+        localStorage.setItem(PENDING_EMAIL_KEY, address);
+        alert('Account created. Supabase may require one email confirmation for a brand-new account; after that, normal sign-in uses your password directly.');
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not create the account.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendEmailCode() {
+    if (!sb) return alert('Missing Supabase environment variables.');
+    const address = email.trim();
+    if (!address) return alert('Enter your email first.');
+    setBusy(true);
+    try {
+      const { error } = await sb.auth.signInWithOtp({ email: address, options: { shouldCreateUser: false } });
+      if (error) throw error;
+      localStorage.setItem(PENDING_EMAIL_KEY, address);
+      alert('Email sent. Enter the six-digit code here. This option works when the Supabase Magic Link template contains {{ .Token }}.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not send the email code.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function verifyInApp(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!sb) return alert('Missing Supabase environment variables.');
     const value = verification.trim();
     const address = email.trim();
+    if (!/^\d{6}$/.test(value)) return alert('Enter the six-digit code from the email.');
     setBusy(true);
     try {
-      let result;
-      if (/^\d{6}$/.test(value)) {
-        result = await sb.auth.verifyOtp({ email: address, token: value, type: 'email' });
-      } else {
-        const url = new URL(value);
-        const supabaseHost = getSupabaseHost();
-        if (url.protocol !== 'https:' || url.host !== supabaseHost || !url.pathname.endsWith('/auth/v1/verify')) {
-          throw new Error('Paste the original Supabase verification link from your email, or enter its six-digit code.');
-        }
-        const token_hash = url.searchParams.get('token');
-        const type = url.searchParams.get('type');
-        if (!token_hash || !['email', 'magiclink', 'signup'].includes(type || '')) {
-          throw new Error('This email link cannot be used for sign-in. Request a new one.');
-        }
-        result = await sb.auth.verifyOtp({ token_hash, type: type as 'email' | 'magiclink' | 'signup' });
-      }
-      if (result.error) throw result.error;
+      const { error } = await sb.auth.verifyOtp({ email: address, token: value, type: 'email' });
+      if (error) throw error;
       localStorage.removeItem(PENDING_EMAIL_KEY);
       setVerification('');
       setShowAuth(false);
       alert('Signed in on this device.');
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Verification failed. Request a new email and try again.');
+      alert(error instanceof Error ? error.message : 'Verification failed. Request a new code and try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setAccountPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!sb || !user) return;
+    if (password.length < 8) return alert('Use a password with at least 8 characters.');
+    setBusy(true);
+    try {
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) throw error;
+      setPassword('');
+      alert('Password saved. You can now sign in directly on any device with email + password.');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not save the password.');
     } finally {
       setBusy(false);
     }
@@ -640,7 +692,7 @@ export function UltimatePlanner() {
     {selectedTask && <TaskDrawer task={selectedTask} parents={lineage(state.tasks, selectedTask)} children={childrenOf(state.tasks, selectedTask.id)} files={state.files.filter((file) => file.taskId === selectedTask.id)} busy={busy} aiProgress={aiProgress} onClose={() => setSelectedTaskId(null)} onEdit={editTask} onNewChild={openTask} onBreakdown={(engine) => void breakdownTask(selectedTask, engine)} onAttach={() => fileInput.current?.click()} onOpenFile={(file) => void openFile(file)} />}
     {taskModal && <TaskModal form={taskForm} tasks={state.tasks} editing={Boolean(editingTask)} setForm={setTaskForm} onSubmit={submitTask} onClose={() => setTaskModal(false)} />}
     {recordModal && <RecordModal module={recordModal} form={recordForm} setForm={setRecordForm} onSubmit={submitRecord} onClose={() => setRecordModal(null)} />}
-    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} verification={verification} setVerification={setVerification} busy={busy} onSubmit={signIn} onVerify={verifyInApp} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
+    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} password={password} setPassword={setPassword} verification={verification} setVerification={setVerification} busy={busy} onSignIn={signInWithPassword} onCreateAccount={() => void createPasswordAccount()} onSendCode={() => void sendEmailCode()} onVerify={verifyInApp} onSetPassword={setAccountPassword} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
     <AssistantPanel actions={{
       getContext: assistantContext,
       navigate: setView,
@@ -717,6 +769,6 @@ function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: Mod
   const info = modules.find((item) => item.module === module)!;
   return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>Add {info.title}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Details"><textarea rows={5} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></Field><div className="form-grid"><Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} /></Field><Field label="Category"><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></Field><Field label="Status"><input value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} /></Field><Field label="Amount"><input type="number" value={form.amount || ''} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save entry</button></form></div>;
 }
-function AuthModal({ user, email, setEmail, verification, setVerification, busy, onSubmit, onVerify, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; verification: string; setVerification: (value: string) => void; busy: boolean; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onVerify: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
-  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and private calendar stay isolated to this account. Other people only see a shared calendar after you explicitly invite them.</p><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSubmit}><p>Sign in with your email. Every account gets its own private workspace.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Send sign-in email'}</button></form><form onSubmit={onVerify}><p>Stay in this app to finish signing in. Enter the six-digit code if your email has one. If it only has a link, long-press the link, copy its address without opening it, then paste it below. If you already opened the link in a browser, send a fresh email first.</p><Field label="Email code or copied verification link"><input type="text" value={verification} onChange={(e) => setVerification(e.target.value)} autoComplete="one-time-code" required /></Field><button className="primary" disabled={busy || !email.trim()}>{busy ? 'Verifying…' : 'Verify and sign in here'}</button></form></>}</div></div>;
+function AuthModal({ user, email, setEmail, password, setPassword, verification, setVerification, busy, onSignIn, onCreateAccount, onSendCode, onVerify, onSetPassword, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; verification: string; setVerification: (value: string) => void; busy: boolean; onSignIn: (event: React.FormEvent<HTMLFormElement>) => void; onCreateAccount: () => void; onSendCode: () => void; onVerify: (event: React.FormEvent<HTMLFormElement>) => void; onSetPassword: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
+  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and calendar data stay isolated to this account.</p><form onSubmit={onSetPassword}><p><strong>Set or change your password</strong></p><p>Do this once, then sign in directly inside Planned Out on any device without opening an email link.</p><Field label="New password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button></form><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSignIn}><p><strong>Email + password</strong></p><p>This is the normal sign-in method. It creates the session in the browser or app you are already using—no email-link browser handoff.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></Field><Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required /></Field><button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button><button type="button" disabled={busy || !email.trim() || password.length < 8} onClick={onCreateAccount}>Create account</button></form><hr /><div><p><strong>Six-digit email code</strong></p><p>Fallback for an existing account with no password. The code is entered here, so there is no copied verification link.</p><button type="button" disabled={busy || !email.trim()} onClick={onSendCode}>{busy ? 'Sending…' : 'Send 6-digit code'}</button></div><form onSubmit={onVerify}><Field label="6-digit code"><input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={verification} onChange={(e) => setVerification(e.target.value.replace(/\D/g, '').slice(0, 6))} autoComplete="one-time-code" required /></Field><button className="primary" disabled={busy || !email.trim() || verification.length !== 6}>{busy ? 'Verifying…' : 'Verify code & sign in'}</button></form></>}</div></div>;
 }
