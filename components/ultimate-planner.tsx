@@ -175,8 +175,7 @@ export function UltimatePlanner() {
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [verification, setVerification] = useState('');
-  const [pendingPasswordSetup, setPendingPasswordSetup] = useState(false);
+  const [awaitingEmailConfirmation, setAwaitingEmailConfirmation] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -192,6 +191,25 @@ export function UltimatePlanner() {
   useEffect(() => {
     setEmail(localStorage.getItem(PENDING_EMAIL_KEY) || '');
   }, []);
+
+  useEffect(() => {
+    if (!sb || !awaitingEmailConfirmation || typeof window === 'undefined') return;
+
+    const retryInOriginalWindow = () => {
+      if (document.visibilityState === 'visible') void finishEmailConfirmation(true);
+    };
+
+    const onFocus = () => void finishEmailConfirmation(true);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', retryInOriginalWindow);
+    const timer = window.setInterval(retryInOriginalWindow, 30000);
+
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', retryInOriginalWindow);
+      window.clearInterval(timer);
+    };
+  }, [sb, awaitingEmailConfirmation, email, password]);
 
   useEffect(() => {
     if (!sb) {
@@ -465,17 +483,49 @@ export function UltimatePlanner() {
       const { error } = await sb.auth.signInWithPassword({ email: address, password });
       if (error) throw error;
       localStorage.removeItem(PENDING_EMAIL_KEY);
-      setPendingPasswordSetup(false);
+      setAwaitingEmailConfirmation(false);
       setPassword('');
-      setVerification('');
       setShowAuth(false);
-      alert('Signed in on this device. No email-link redirect needed.');
+      alert('Signed in on this device.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not sign in.';
-      alert(`${message} If you need to create or recover the account, use Create account and verify the six-digit email code.`);
+      alert(message);
     } finally {
       authRequestInFlight.current = false;
       setBusy(false);
+    }
+  }
+
+  async function finishEmailConfirmation(silent = false): Promise<boolean> {
+    if (!sb || !awaitingEmailConfirmation) return false;
+    const address = email.trim();
+    if (!address || password.length < 8 || authRequestInFlight.current) return false;
+
+    authRequestInFlight.current = true;
+    if (!silent) setBusy(true);
+    try {
+      const { error } = await sb.auth.signInWithPassword({ email: address, password });
+      if (error) {
+        const message = error.message.toLowerCase();
+        if (!silent) {
+          if (message.includes('email not confirmed')) {
+            alert('Your email has not been confirmed yet. Open the confirmation email, then return to this Planned Out window.');
+          } else {
+            alert(error.message);
+          }
+        }
+        return false;
+      }
+
+      localStorage.removeItem(PENDING_EMAIL_KEY);
+      setAwaitingEmailConfirmation(false);
+      setPassword('');
+      setShowAuth(false);
+      alert('Email confirmed. Signed in on this original Planned Out window.');
+      return true;
+    } finally {
+      authRequestInFlight.current = false;
+      if (!silent) setBusy(false);
     }
   }
 
@@ -484,77 +534,47 @@ export function UltimatePlanner() {
     const address = email.trim();
     if (!address || password.length < 8) return alert('Use an email and a password with at least 8 characters.');
     if (authRequestInFlight.current) return;
+
     authRequestInFlight.current = true;
     setBusy(true);
     try {
-      const { error } = await sb.auth.signInWithOtp({
+      const { data, error } = await sb.auth.signUp({
         email: address,
-        options: { shouldCreateUser: true }
+        password,
+        options: { emailRedirectTo: window.location.origin }
       });
       if (error) throw error;
-      localStorage.setItem(PENDING_EMAIL_KEY, address);
-      setPendingPasswordSetup(true);
-      setVerification('');
-      alert('Verification email sent. Enter the six-digit code here to verify the email and finish setting your password. If this email already has an account, the same code safely verifies ownership before updating the password.');
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Could not send the verification code.');
-    } finally {
-      authRequestInFlight.current = false;
-      setBusy(false);
-    }
-  }
 
-  async function sendEmailCode() {
-    if (!sb) return alert('Missing Supabase environment variables.');
-    const address = email.trim();
-    if (!address) return alert('Enter your email first.');
-    if (authRequestInFlight.current) return;
-    authRequestInFlight.current = true;
-    setBusy(true);
-    try {
-      const { error } = await sb.auth.signInWithOtp({ email: address, options: { shouldCreateUser: false } });
-      if (error) throw error;
-      localStorage.setItem(PENDING_EMAIL_KEY, address);
-      setPendingPasswordSetup(false);
-      setVerification('');
-      alert('Email sent. Enter the six-digit code here to sign in on this device.');
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Could not send the email code.');
-    } finally {
-      authRequestInFlight.current = false;
-      setBusy(false);
-    }
-  }
-
-  async function verifyInApp(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!sb) return alert('Missing Supabase environment variables.');
-    const value = verification.trim();
-    const address = email.trim();
-    if (!/^\d{6}$/.test(value)) return alert('Enter the six-digit code from the email.');
-    if (pendingPasswordSetup && password.length < 8) return alert('Keep the password at 8 characters or longer while you verify the code.');
-    if (authRequestInFlight.current) return;
-    authRequestInFlight.current = true;
-    setBusy(true);
-    try {
-      const { error } = await sb.auth.verifyOtp({ email: address, token: value, type: 'email' });
-      if (error) throw error;
-
-      if (pendingPasswordSetup) {
-        const { error: passwordError } = await sb.auth.updateUser({ password });
-        if (passwordError) throw passwordError;
+      if (data.session) {
+        localStorage.removeItem(PENDING_EMAIL_KEY);
+        setAwaitingEmailConfirmation(false);
+        setPassword('');
+        setShowAuth(false);
+        alert('Account created and signed in on this device.');
+        return;
       }
 
-      localStorage.removeItem(PENDING_EMAIL_KEY);
-      const completedPasswordSetup = pendingPasswordSetup;
-      setPendingPasswordSetup(false);
-      setPassword('');
-      setVerification('');
-      setShowAuth(false);
-      alert(completedPasswordSetup
-        ? 'Email verified and password saved. You are signed in on this device.'
-        : 'Email verified. You are signed in on this device.');
+      const immediate = await sb.auth.signInWithPassword({ email: address, password });
+      if (!immediate.error) {
+        localStorage.removeItem(PENDING_EMAIL_KEY);
+        setAwaitingEmailConfirmation(false);
+        setPassword('');
+        setShowAuth(false);
+        alert('Account ready. Signed in on this device.');
+        return;
+      }
+
+      const signInMessage = immediate.error.message.toLowerCase();
+      const duplicateIdentity = Boolean(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0);
+      if (duplicateIdentity && !signInMessage.includes('email not confirmed')) {
+        throw new Error('An account already exists for this email. Use its password to sign in.');
+      }
+
+      localStorage.setItem(PENDING_EMAIL_KEY, address);
+      setAwaitingEmailConfirmation(true);
+      alert('Confirmation email sent. Open the confirmation link in any browser. Then return to this original Planned Out window — it will finish signing in here automatically.');
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Verification failed. Request a new code and try again.');
+      alert(error instanceof Error ? error.message : 'Could not create the account.');
     } finally {
       authRequestInFlight.current = false;
       setBusy(false);
@@ -724,7 +744,7 @@ export function UltimatePlanner() {
     {selectedTask && <TaskDrawer task={selectedTask} parents={lineage(state.tasks, selectedTask)} children={childrenOf(state.tasks, selectedTask.id)} files={state.files.filter((file) => file.taskId === selectedTask.id)} busy={busy} aiProgress={aiProgress} onClose={() => setSelectedTaskId(null)} onEdit={editTask} onNewChild={openTask} onBreakdown={(engine) => void breakdownTask(selectedTask, engine)} onAttach={() => fileInput.current?.click()} onOpenFile={(file) => void openFile(file)} />}
     {taskModal && <TaskModal form={taskForm} tasks={state.tasks} editing={Boolean(editingTask)} setForm={setTaskForm} onSubmit={submitTask} onClose={() => setTaskModal(false)} />}
     {recordModal && <RecordModal module={recordModal} form={recordForm} setForm={setRecordForm} onSubmit={submitRecord} onClose={() => setRecordModal(null)} />}
-    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} password={password} setPassword={setPassword} verification={verification} setVerification={setVerification} pendingPasswordSetup={pendingPasswordSetup} busy={busy} onSignIn={signInWithPassword} onCreateAccount={() => void createPasswordAccount()} onSendCode={() => void sendEmailCode()} onVerify={verifyInApp} onSetPassword={setAccountPassword} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
+    {showAuth && <AuthModal user={user} email={email} setEmail={setEmail} password={password} setPassword={setPassword} awaitingEmailConfirmation={awaitingEmailConfirmation} busy={busy} onSignIn={signInWithPassword} onCreateAccount={() => void createPasswordAccount()} onFinishConfirmation={() => void finishEmailConfirmation(false)} onSetPassword={setAccountPassword} onSignOut={() => void signOut()} onClose={() => setShowAuth(false)} />}
     <AssistantPanel actions={{
       getContext: assistantContext,
       navigate: setView,
@@ -801,6 +821,6 @@ function RecordModal({ module, form, setForm, onSubmit, onClose }: { module: Mod
   const info = modules.find((item) => item.module === module)!;
   return <div className="modal"><form className="modal-card" onSubmit={onSubmit}><button type="button" className="x" onClick={onClose}>×</button><h2>Add {info.title}</h2><Field label="Title"><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} required /></Field><Field label="Details"><textarea rows={5} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></Field><div className="form-grid"><Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} /></Field><Field label="Category"><input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} /></Field><Field label="Status"><input value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))} /></Field><Field label="Amount"><input type="number" value={form.amount || ''} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value ? Number(e.target.value) : undefined }))} /></Field></div><Field label="Tags"><input value={form.tags.join(', ')} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) }))} /></Field><button className="primary" type="submit">Save entry</button></form></div>;
 }
-function AuthModal({ user, email, setEmail, password, setPassword, verification, setVerification, pendingPasswordSetup, busy, onSignIn, onCreateAccount, onSendCode, onVerify, onSetPassword, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; verification: string; setVerification: (value: string) => void; pendingPasswordSetup: boolean; busy: boolean; onSignIn: (event: React.FormEvent<HTMLFormElement>) => void; onCreateAccount: () => void; onSendCode: () => void; onVerify: (event: React.FormEvent<HTMLFormElement>) => void; onSetPassword: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
-  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and calendar data stay isolated to this account.</p><form onSubmit={onSetPassword}><p><strong>Set or change your password</strong></p><p>Do this once, then sign in directly inside Planned Out on any device without opening an email link.</p><Field label="New password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button></form><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSignIn}><p><strong>Email + password</strong></p><p>This is the normal sign-in method. It creates the session in the browser or app you are already using—no email-link browser handoff.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></Field><Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={pendingPasswordSetup ? "new-password" : "current-password"} minLength={pendingPasswordSetup ? 8 : undefined} required /></Field><button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button><button type="button" disabled={busy || !email.trim() || password.length < 8} onClick={onCreateAccount}>{busy && pendingPasswordSetup ? 'Sending code…' : 'Create account'}</button><p className="muted">Create account verifies your email inside Planned Out with a six-digit code, then saves this password. No confirmation-link browser handoff is required.</p></form><hr /><div><p><strong>Six-digit email code</strong></p><p>{pendingPasswordSetup ? 'Enter the verification code to finish creating or recovering this account and save the password above.' : 'Use this to sign in by email code without leaving this browser or app.'}</p>{!pendingPasswordSetup && <button type="button" disabled={busy || !email.trim()} onClick={onSendCode}>{busy ? 'Sending…' : 'Send 6-digit code'}</button>}</div><form onSubmit={onVerify}><Field label="6-digit code"><input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={verification} onChange={(e) => setVerification(e.target.value.replace(/\D/g, '').slice(0, 6))} autoComplete="one-time-code" required /></Field><button className="primary" disabled={busy || !email.trim() || verification.length !== 6}>{busy ? 'Verifying…' : pendingPasswordSetup ? 'Verify & finish account' : 'Verify code & sign in'}</button></form></>}</div></div>;
+function AuthModal({ user, email, setEmail, password, setPassword, awaitingEmailConfirmation, busy, onSignIn, onCreateAccount, onFinishConfirmation, onSetPassword, onSignOut, onClose }: { user: User | null; email: string; setEmail: (value: string) => void; password: string; setPassword: (value: string) => void; awaitingEmailConfirmation: boolean; busy: boolean; onSignIn: (event: React.FormEvent<HTMLFormElement>) => void; onCreateAccount: () => void; onFinishConfirmation: () => void; onSetPassword: (event: React.FormEvent<HTMLFormElement>) => void; onSignOut: () => void; onClose: () => void }) {
+  return <div className="modal"><div className="modal-card"><button type="button" className="x" onClick={onClose}>×</button><h2>Private Planned Out account</h2>{user ? <><p>Signed in as {user.email}. Your tasks, notes, files and calendar data stay isolated to this account.</p><form onSubmit={onSetPassword}><p><strong>Set or change your password</strong></p><p>Use this password to sign in directly inside Planned Out on any device.</p><Field label="New password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button></form><button onClick={onSignOut}>Sign out</button></> : <><form onSubmit={onSignIn}><p><strong>Email + password</strong></p><p>The session is created in the Planned Out window you are actually using.</p><Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></Field><Field label="Password"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={awaitingEmailConfirmation ? "new-password" : "current-password"} minLength={8} required /></Field><button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button><button type="button" disabled={busy || !email.trim() || password.length < 8} onClick={onCreateAccount}>{busy ? 'Working…' : 'Create account'}</button><p className="muted">Create account saves the password first. If Supabase opens the confirmation link in another browser, that is okay: confirm the email there, then return here. Planned Out will sign this original window in automatically.</p></form>{awaitingEmailConfirmation && <><hr /><div><p><strong>Waiting for email confirmation</strong></p><p>You can open the confirmation link in any browser. When you come back to this Planned Out window, it retries the password sign-in here automatically.</p><button className="primary" type="button" disabled={busy} onClick={onFinishConfirmation}>{busy ? 'Checking…' : 'I confirmed it — finish sign-in here'}</button></div></>}</>}</div></div>;
 }
